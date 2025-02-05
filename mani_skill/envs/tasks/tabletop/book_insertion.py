@@ -126,38 +126,26 @@ class BookInsertionEnv(BaseEnv):
             cover_thickness = 0.003
             cover_overhang = 0.003
 
-            num_env_books = 8
+            self.num_env_books = 8
+            self.slot_left_of_book_index = 4
             
             grasped_book_lengths = self._batched_episode_rng.uniform(0.1, 0.15)
             grasped_book_widths = self._batched_episode_rng.uniform(0.015, 0.06) # max gripper width is .08
             grasped_book_heights = self._batched_episode_rng.uniform(0.15, 0.25)
-
-            # lengths = self._batched_episode_rng.uniform(0.085, 0.125)
-            # radii = self._batched_episode_rng.uniform(0.015, 0.025)
-            # centers = (
-            #     0.5
-            #     * (lengths - radii)[:, None]
-            #     * self._batched_episode_rng.uniform(-1, 1, size=(2,))
-            # )
+            grasped_book_colors = np.ones((self.num_envs, 4))
+            grasped_book_colors[:,0] = self._batched_episode_rng.uniform(0.0, 1.0)
+            grasped_book_colors[:,1] = self._batched_episode_rng.uniform(0.0, 1.0)
+            grasped_book_colors[:,2] = self._batched_episode_rng.uniform(0.0, 1.0)
 
             # # save some useful values for use later
             self.grasped_book_sizes = common.to_tensor(np.vstack([grasped_book_lengths, grasped_book_widths, grasped_book_heights])).T
-            # self.peg_half_sizes = common.to_tensor(np.vstack([lengths, radii, radii])).T
-            # peg_head_offsets = torch.zeros((self.num_envs, 3))
-            # peg_head_offsets[:, 0] = self.peg_half_sizes[:, 0]
-            # self.peg_head_offsets = Pose.create_from_pq(p=peg_head_offsets)
-
-            # box_hole_offsets = torch.zeros((self.num_envs, 3))
-            # box_hole_offsets[:, 1:] = common.to_tensor(centers)
-            # self.box_hole_offsets = Pose.create_from_pq(p=box_hole_offsets)
-            # self.box_hole_radii = common.to_tensor(radii + self._clearance)
 
             env_book_lengths = []
             env_book_widths = []
             env_book_heights = []
             env_book_colors = []
-            for i in range(num_env_books):
-                env_book_lengths.append(self._batched_episode_rng.uniform(0.1, 0.15))
+            for i in range(self.num_env_books):
+                env_book_lengths.append(self._batched_episode_rng.uniform(0.15, 0.2))
                 env_book_widths.append(self._batched_episode_rng.uniform(0.015, 0.04))
                 env_book_heights.append(self._batched_episode_rng.uniform(0.2475, 0.2525))
 
@@ -174,11 +162,8 @@ class BookInsertionEnv(BaseEnv):
             self.env_book_sizes = common.to_tensor(np.stack([env_book_lengths, env_book_widths, env_book_heights], axis=2))
 
             env_book_colors = np.stack(env_book_colors,axis=1) # bxNx4
-            assert env_book_colors.shape == (self.num_envs, num_env_books, 4), f"env_book_colors shape is incorrect, {env_book_colors.shape}"
+            assert env_book_colors.shape == (self.num_envs, self.num_env_books, 4), f"env_book_colors shape is incorrect, {env_book_colors.shape}"
 
-            # # in each parallel env we build a different box with a hole and peg (the task is meant to be quite difficult)
-            # pegs = []
-            # boxes = []
             grasped_books = []
             for i in range(self.num_envs):
                 scene_idxs = [i]
@@ -189,7 +174,8 @@ class BookInsertionEnv(BaseEnv):
                 builder = _build_book(
                     self.scene, 
                     grasped_book_length, grasped_book_width, grasped_book_height, 
-                    binding_thickness, cover_thickness, cover_overhang
+                    binding_thickness, cover_thickness, cover_overhang,
+                    book_color=grasped_book_colors[i]
                 )
                 builder.initial_pose = sapien.Pose(p=[0, 1, 0.3])
                 builder.set_scene_idxs(scene_idxs)
@@ -197,57 +183,11 @@ class BookInsertionEnv(BaseEnv):
                 self.remove_from_state_dict_registry(grasped_book)
                 grasped_books.append(grasped_book)
 
-                # builder.add_box_collision(half_size=[book_length, radius, radius])
-                # # peg head
-                # mat = sapien.render.RenderMaterial(
-                #     base_color=sapien_utils.hex2rgba("#EC7357"),
-                #     roughness=0.5,
-                #     specular=0.5,
-                # )
-                # builder.add_box_visual(
-                #     sapien.Pose([book_length / 2, 0, 0]),
-                #     half_size=[book_length / 2, radius, radius],
-                #     material=mat,
-                # )
-                # # peg tail
-                # mat = sapien.render.RenderMaterial(
-                #     base_color=sapien_utils.hex2rgba("#EDF6F9"),
-                #     roughness=0.5,
-                #     specular=0.5,
-                # )
-                # builder.add_box_visual(
-                #     sapien.Pose([-book_length / 2, 0, 0]),
-                #     half_size=[book_length / 2, radius, radius],
-                #     material=mat,
-                # )
-                # builder.initial_pose = sapien.Pose(p=[0, 0, 0.1])
-                # builder.set_scene_idxs(scene_idxs)
-                # peg = builder.build(f"peg_{i}")
-                # self.remove_from_state_dict_registry(peg)
-                # # box with hole
-
-                # inner_radius, outer_radius, depth = (
-                #     radius + self._clearance,
-                #     book_length,
-                #     book_length,
-                # )
-                # builder = _build_box_with_hole(
-                #     self.scene, inner_radius, outer_radius, depth, center=centers[i]
-                # )
-                # builder.initial_pose = sapien.Pose(p=[0, 1, 0.1])
-                # builder.set_scene_idxs(scene_idxs)
-                # box = builder.build_kinematic(f"box_with_hole_{i}")
-                # self.remove_from_state_dict_registry(box)
-                # pegs.append(peg)
-                # boxes.append(box)
-
-            # self.peg = Actor.merge(pegs, "peg")
-            # self.box = Actor.merge(boxes, "box_with_hole")
             self.grasped_book = Actor.merge(grasped_books, "grasped_book")
             self.add_to_state_dict_registry(self.grasped_book)
 
             env_books = []
-            for j in range(num_env_books):
+            for j in range(self.num_env_books):
                 envs_per_env_book = []
                 for i in range(self.num_envs):
                     book_length = env_book_lengths[i, j]
@@ -269,7 +209,7 @@ class BookInsertionEnv(BaseEnv):
             
             # want to make Nxb env books
                 
-            for j in range(num_env_books):
+            for j in range(self.num_env_books):
                 envs_per_env_book = env_books[j]
                 env_books[j] = Actor.merge(envs_per_env_book, f"book_{j}")
                 self.add_to_state_dict_registry(env_books[j])
@@ -287,22 +227,6 @@ class BookInsertionEnv(BaseEnv):
             b = len(env_idx)
             self.table_scene.initialize(env_idx)
 
-            # xy = randomization.uniform(
-            #     low=torch.tensor([-0.05, 0.2]),
-            #     high=torch.tensor([0.05, 0.4]),
-            #     size=(b, 2),
-            # )
-            # pos = torch.zeros((b, 3))
-            # pos[:, :2] = xy
-            # pos[:, 2] = self.peg_half_sizes[env_idx, 0]
-            # quat = randomization.random_quaternions(
-            #     b,
-            #     self.device,
-            #     lock_x=True,
-            #     lock_y=True,
-            #     bounds=(np.pi / 2 - np.pi / 8, np.pi / 2 + np.pi / 8),
-            # )
-            # self.box.set_pose(Pose.create_from_pq(pos, quat))
             # Initialize the robot
             qpos = torch.tensor(
                 [
@@ -317,22 +241,6 @@ class BookInsertionEnv(BaseEnv):
                     .04,
                 ]
             )
-            # qpos = np.array(
-            #     [
-            #         0.0,
-            #         np.pi / 8,
-            #         0,
-            #         -np.pi * 5 / 8,
-            #         0,
-            #         np.pi * 3 / 4,
-            #         -np.pi / 4,
-            #         0.04,
-            #         0.04,
-            #     ]
-            # )
-            # qpos = self._episode_rng.normal(0, 0.02, (b, len(qpos))) + qpos
-            # repeat over batch dimension
-            # qpos = np.repeat(qpos[None, :], b, axis=0)
             qpos = qpos.repeat(b, 1)
             qpos[:, -2:] = (self.grasped_book_sizes[:, 1])/2 + .001
             self.agent.robot.set_qpos(qpos)
@@ -346,23 +254,6 @@ class BookInsertionEnv(BaseEnv):
 
             end_effector_pose = self.agent.tcp.pose.raw_pose
             
-            # # initialize the box and peg
-            # xy = randomization.uniform(
-            #     low=torch.tensor([-0.1, -0.3]), high=torch.tensor([0.1, 0]), size=(b, 2)
-            # )
-            # pos = torch.zeros((b, 3))
-            # pos[:, :2] = xy
-            # # pos[:, 2] = self.peg_half_sizes[env_idx, 2]
-            # pos[:, 2] = 0.3
-            # quat = randomization.random_quaternions(
-            #     b,
-            #     self.device,
-            #     lock_x=True,
-            #     lock_y=True,
-            #     bounds=(np.pi / 2 - np.pi / 3, np.pi / 2 + np.pi / 3),
-            # )
-            # self.peg.set_pose(Pose.create_from_pq(pos, quat))
-
             # .038 from tcp to flat surface of gripper
             pos = torch.zeros((b, 3))
             pos[:, :2] = end_effector_pose[:, :2]
@@ -372,6 +263,27 @@ class BookInsertionEnv(BaseEnv):
             # apply 180 intrinsic rotation around z-axis
             quat = quaternion_multiply(quat, axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])))
             self.grasped_book.set_pose(Pose.create_from_pq(pos, quat))
+
+            xy_slot_location = common.to_tensor(np.zeros((b, 2)))
+            xy_slot_location[:, 0] = end_effector_pose[:, 0]
+            xy_slot_location[:, 1] = 0
+
+            slot_width = self.grasped_book_sizes[:, 1] - .004
+
+            quat = torch.tensor([0, 0, 0, 1]).repeat(b, 1)
+            # compute the env book poses
+            for j in range(len(self.env_books)):
+                pos = torch.zeros((b, 3))
+                pos[:, 0] = xy_slot_location[:, 0] - self.env_book_sizes[:, j, 0]/2 + .15/2
+                pos[:, 2] = self.env_book_sizes[:, j, 2]/2 + .001
+                if j < self.slot_left_of_book_index:
+                    pos[:, 1] = xy_slot_location[:, 1] - ((slot_width/2) + self.env_book_sizes[:, j+1:self.slot_left_of_book_index, 1].sum(dim=1))
+                    pos[:, 1] += -self.env_book_sizes[:, j, 1]/2
+                else:
+                    pos[:, 1] = xy_slot_location[:, 1] + ((slot_width/2) + self.env_book_sizes[:, self.slot_left_of_book_index:j, 1].sum(dim=1))
+                    pos[:, 1] += self.env_book_sizes[:, j, 1]/2
+
+                self.env_books[j].set_pose(Pose.create_from_pq(pos, quat))   
 
     # # save some commonly used attributes
     # @property
