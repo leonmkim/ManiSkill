@@ -25,6 +25,7 @@ def _build_book(
     length, width, height, # bounding box of the book
     binding_thickness, cover_thickness, cover_overhang,
     book_color="#FFD289", 
+    density=0.705,
 ):
     if isinstance(book_color, str):
         book_color = sapien_utils.hex2rgba(book_color)
@@ -56,8 +57,8 @@ def _build_book(
             mat = sapien.render.RenderMaterial(
                 base_color=book_color, roughness=0.5, specular=0.5
             )
-        if i != 1: # skip adding collision for binding to try to speed sim
-            builder.add_box_collision(pose, half_size)
+        # if i != 1: # skip adding collision for binding to try to speed sim
+        builder.add_box_collision(pose, half_size, density=density)
         builder.add_box_visual(pose, half_size, material=mat)
     return builder
     
@@ -80,7 +81,13 @@ class BookInsertionEnv(BaseEnv):
     _sample_video_link = "https://github.com/haosulab/ManiSkill/raw/main/figures/environment_demos/PegInsertionSide-v1_rt.mp4"
     SUPPORTED_ROBOTS = ["panda"]
     agent: Union[Panda]
-    _clearance = 0.003
+    
+    num_env_books: int = 8
+    slot_left_of_book_index: int = 4
+
+    binding_thickness: float = 0.005
+    cover_thickness: float = 0.003
+    cover_overhang: float = 0.005
 
     def __init__(
         self,
@@ -95,6 +102,14 @@ class BookInsertionEnv(BaseEnv):
                 reconfiguration_freq = 1
             else:
                 reconfiguration_freq = 0
+        
+        # get list of specific kwargs defined above
+        special_kwargs = ['num_env_books', 'slot_left_of_book_index']
+        for key in special_kwargs:
+            if key in kwargs:
+                setattr(self, key, kwargs[key])
+                del kwargs[key]
+
         super().__init__(
             *args,
             robot_uids=robot_uids,
@@ -114,6 +129,7 @@ class BookInsertionEnv(BaseEnv):
         intrinsics = torch.tensor([[596.61175537,0.,323.86328125],
                                 [0.,596.96472168,246.78981018],
                                 [0.,0.,1.]])
+        
         world_tf_root = self.agent.robot.get_pose()
 
         # training contact estimator
@@ -156,7 +172,7 @@ class BookInsertionEnv(BaseEnv):
         pose = sapien_utils.look_at(eye, look_at)
 
         # return CameraConfig("render_camera", pose, 512, 512, 1, 0.01, 100)
-        return CameraConfig("render_camera", pose, 256, 256, 1, 0.01, 5.0)
+        return CameraConfig("render_camera", pose, 128, 128, 1, 0.01, 5.0)
 
     def _load_agent(self, options: dict):
         super()._load_agent(options, sapien.Pose(p=[-0.615, 0, 0]))
@@ -172,17 +188,10 @@ class BookInsertionEnv(BaseEnv):
             self.camera_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="camera_pose", body_type="kinematic")
             self._hidden_objects.append(self.camera_pose)
 
-            binding_thickness = 0.005
-            cover_thickness = 0.003
-            cover_overhang = 0.003
-
-            # self.num_env_books = 8
-            self.num_env_books = 8
-            self.slot_left_of_book_index = 4
-            
             grasped_book_lengths = self._batched_episode_rng.uniform(0.1, 0.15)
-            grasped_book_widths = self._batched_episode_rng.uniform(0.015, 0.06) # max gripper width is .08
+            grasped_book_widths = self._batched_episode_rng.uniform(0.02, 0.06) # max gripper width is .08
             grasped_book_heights = self._batched_episode_rng.uniform(0.15, 0.25)
+            grasped_book_densities = self._batched_episode_rng.uniform(650, 850)
             grasped_book_colors = np.ones((self.num_envs, 4))
             grasped_book_colors[:,0] = self._batched_episode_rng.uniform(0.0, 1.0)
             grasped_book_colors[:,1] = self._batched_episode_rng.uniform(0.0, 1.0)
@@ -195,10 +204,12 @@ class BookInsertionEnv(BaseEnv):
             env_book_widths = []
             env_book_heights = []
             env_book_colors = []
+            env_book_densities = []
             for i in range(self.num_env_books):
                 env_book_lengths.append(self._batched_episode_rng.uniform(0.15, 0.2))
-                env_book_widths.append(self._batched_episode_rng.uniform(0.015, 0.04))
+                env_book_widths.append(self._batched_episode_rng.uniform(0.015, 0.05))
                 env_book_heights.append(self._batched_episode_rng.uniform(0.2475, 0.2525))
+                env_book_densities.append(self._batched_episode_rng.uniform(655, 1015))
 
                 color = np.ones((self.num_envs, 4))
                 color[:,0] = self._batched_episode_rng.uniform(0.0, 1.0)
@@ -211,7 +222,7 @@ class BookInsertionEnv(BaseEnv):
             env_book_heights = np.vstack(env_book_heights).T # bxN
             # construct bxNx3 tensor
             self.env_book_sizes = common.to_tensor(np.stack([env_book_lengths, env_book_widths, env_book_heights], axis=2))
-
+            env_book_densities = common.to_tensor(np.stack(env_book_densities, axis=1)) # bxN
             env_book_colors = np.stack(env_book_colors,axis=1) # bxNx4
             assert env_book_colors.shape == (self.num_envs, self.num_env_books, 4), f"env_book_colors shape is incorrect, {env_book_colors.shape}"
 
@@ -225,8 +236,9 @@ class BookInsertionEnv(BaseEnv):
                 builder = _build_book(
                     self.scene, 
                     grasped_book_length, grasped_book_width, grasped_book_height, 
-                    binding_thickness, cover_thickness, cover_overhang,
-                    book_color=grasped_book_colors[i]
+                    self.binding_thickness, self.cover_thickness, self.cover_overhang,
+                    book_color=grasped_book_colors[i],
+                    density=grasped_book_densities[i],
                 )
                 builder.initial_pose = sapien.Pose(p=[0, 1, 0.3])
                 builder.set_scene_idxs(scene_idxs)
@@ -261,8 +273,9 @@ class BookInsertionEnv(BaseEnv):
                     builder = _build_book(
                         self.scene, 
                         book_length, book_width, book_height, 
-                        binding_thickness, cover_thickness, cover_overhang,
-                        book_color=env_book_colors[i, j]
+                        self.binding_thickness, self.cover_thickness, self.cover_overhang,
+                        book_color=env_book_colors[i, j],
+                        density=env_book_densities[i, j],
                     )
                     builder.initial_pose = sapien.Pose(p=[0, -1, 0.5*(j+1)])
                     builder.set_scene_idxs(scene_idxs)
@@ -272,14 +285,14 @@ class BookInsertionEnv(BaseEnv):
 
                 env_books.append(envs_per_env_book)
 
-            env_book_collision_indices = [0]
-            for j in range(self.num_env_books-2):
-                env_book_collision_indices.append(env_book_collision_indices[j]+(j+2))
+            # env_book_collision_indices = [0]
+            # for j in range(self.num_env_books-2):
+            #     env_book_collision_indices.append(env_book_collision_indices[j]+(j+2))
 
 
-            env_book_collision_group = 0
-            for idx in env_book_collision_indices:
-                env_book_collision_group |= 1 << idx
+            # env_book_collision_group = 0
+            # for idx in env_book_collision_indices:
+            #     env_book_collision_group |= 1 << idx
 
             # want to make Nxb env books
                 
@@ -296,7 +309,6 @@ class BookInsertionEnv(BaseEnv):
             # of the parallel actors
             # self.add_to_state_dict_registry(self.peg)
             # self.add_to_state_dict_registry(self.box)
-
             
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):
@@ -345,7 +357,7 @@ class BookInsertionEnv(BaseEnv):
             xy_slot_location[:, 0] = end_effector_pose[:, 0]
             xy_slot_location[:, 1] = 0
 
-            slot_width = self.grasped_book_sizes[:, 1] - .004
+            slot_width = self.grasped_book_sizes[:, 1] - .0035
 
             quat = torch.tensor([0, 0, 0, 1]).repeat(b, 1)
             # compute the env book poses
@@ -375,7 +387,6 @@ class BookInsertionEnv(BaseEnv):
             self.base_camera_extrinsic_cv = self.scene.sensors['base_camera'].get_params()['extrinsic_cv']
             # extrinsic cv is bx3x4 so add a row of [0,0,0,1] to make it bx4x4
             self.base_camera_extrinsic_cv = torch.cat([self.base_camera_extrinsic_cv, torch.tensor([[[0,0,0,1]]])], dim=1)
-
 
     # def _after_simulation_step(self):
     #     # update target EE pose
