@@ -15,8 +15,10 @@ from mani_skill.utils.structs.actor import Actor
 
 @register_agent()
 class Panda(BaseAgent):
+    disable_self_collisions = True
     uid = "panda"
     urdf_path = f"{PACKAGE_ASSET_DIR}/robots/panda/panda_v2.urdf"
+    # urdf_path = f"{PACKAGE_ASSET_DIR}/robots/panda/panda_v3.urdf"
     urdf_config = dict(
         _materials=dict(
             gripper=dict(static_friction=2.0, dynamic_friction=2.0, restitution=0.0)
@@ -232,6 +234,12 @@ class Panda(BaseAgent):
         self.tcp = sapien_utils.get_obj_by_name(
             self.robot.get_links(), self.ee_link_name
         )
+
+        # set collision group for all links besides fingers and hand
+        # for link in self.robot.get_links():
+        #     if link.name not in ["panda_leftfinger", "panda_rightfinger", "panda_hand"]:
+        #         # print(link.name)
+        #         link.set_collision_group(group=2, value=2147483647)
 
     def is_grasping(self, object: Actor, min_force=0.5, max_angle=85):
         """Check if the robot is grasping an object

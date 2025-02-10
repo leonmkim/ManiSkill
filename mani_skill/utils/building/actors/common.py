@@ -317,3 +317,42 @@ def build_colorful_cube(
         ),
     )
     return _build_by_type(builder, name, body_type, scene_idxs, initial_pose)
+
+def build_coordinate_frame(
+        scene: ManiSkillScene,
+        axis_length: float,
+        axis_radius: float,
+        name: str,
+        body_type: str = 'kinematic',
+        scene_idxs: Optional[Array] = None,
+        initial_pose: Optional[Union[Pose, sapien.Pose]] = None,
+):
+    from mani_skill.utils.geometry.rotation_conversions import axis_angle_to_quaternion
+    import torch
+    
+    builder = scene.create_actor_builder()
+    builder.add_cylinder_visual(
+        pose=sapien.Pose(p=[axis_length/2, 0, 0], q=axis_angle_to_quaternion(torch.tensor([0.0, 0.0, 0.0]))),
+        radius=axis_radius,
+        half_length=axis_length/2,
+        material=sapien.render.RenderMaterial(
+            base_color=[1, 0, 0, 1],
+        ),
+    )
+    builder.add_cylinder_visual(
+        pose=sapien.Pose(p=[0, axis_length/2, 0], q=axis_angle_to_quaternion(torch.tensor([0.0, 0, torch.pi/2]))),
+        radius=axis_radius,
+        half_length=axis_length/2,
+        material=sapien.render.RenderMaterial(
+            base_color=[0, 1, 0, 1],
+        ),
+    )
+    builder.add_cylinder_visual(
+        pose=sapien.Pose(p=[0, 0, axis_length/2], q=axis_angle_to_quaternion(torch.tensor([0.0, -torch.pi/2, 0.0]))),
+        radius=axis_radius,
+        half_length=axis_length/2,
+        material=sapien.render.RenderMaterial(
+            base_color=[0, 0, 1, 1],
+        ),
+    )
+    return _build_by_type(builder, name, body_type, scene_idxs, initial_pose)

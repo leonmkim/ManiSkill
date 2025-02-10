@@ -11,12 +11,14 @@ from mani_skill.envs.utils import randomization
 from mani_skill.sensors.camera import CameraConfig
 from mani_skill.utils import common, sapien_utils
 from mani_skill.utils.registration import register_env
-from mani_skill.utils.scene_builder.table import TableSceneBuilder
+from mani_skill.utils.scene_builder.table import TableSceneBuilder, SimpleTableSceneBuilder
+from mani_skill.utils.building.actors.common import build_coordinate_frame
 from mani_skill.utils.structs import Actor, Pose
 from mani_skill.utils.structs.types import SimConfig
 
 from mani_skill.utils.geometry.rotation_conversions import quaternion_multiply, axis_angle_to_quaternion
-
+from mani_skill.utils.geometry.geometry import transform_points
+import einops
 
 def _build_book(
     scene: ManiSkillScene, 
@@ -54,7 +56,8 @@ def _build_book(
             mat = sapien.render.RenderMaterial(
                 base_color=book_color, roughness=0.5, specular=0.5
             )
-        builder.add_box_collision(pose, half_size)
+        if i != 1: # skip adding collision for binding to try to speed sim
+            builder.add_box_collision(pose, half_size)
         builder.add_box_visual(pose, half_size, material=mat)
     return builder
     
@@ -106,26 +109,74 @@ class BookInsertionEnv(BaseEnv):
 
     @property
     def _default_sensor_configs(self):
-        pose = sapien_utils.look_at([0, -0.3, 0.2], [0, 0, 0.1])
-        return [CameraConfig("base_camera", pose, 128, 128, np.pi / 2, 0.01, 100)]
+        from mani_skill.utils.geometry.rotation_conversions import matrix_to_quaternion
+        # pose = sapien_utils.look_at([0, -0.3, 0.2], [0, 0, 0.1])
+        intrinsics = torch.tensor([[596.61175537,0.,323.86328125],
+                                [0.,596.96472168,246.78981018],
+                                [0.,0.,1.]])
+        world_tf_root = self.agent.robot.get_pose()
+
+        # training contact estimator
+        # cam_tf_root = torch.tensor(
+        # [[1.22464680e-16, 1.00000000e+00, 0.00000000e+00, -2.02066722e-16],
+        # [2.03567160e-01, -2.49297871e-17, -9.79060985e-01, -1.58629880e-03],
+        # [-9.79060985e-01, 1.19900390e-16, -2.03567160e-01, 1.67259212e+00],
+        # [0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
+        # )
+
+        # real
+        # cam_tf_root = torch.tensor([[0.04930081, 0.99874239, -0.00911423, -0.04363872],
+        #                             [0.12278183, -0.01511647, -0.99231855, 0.19901163],
+        #                             [-0.99120838, 0.04780304, -0.12337268, 1.74423175],
+        #                             [0., 0.,0.,1.]])
+        # cam_tf_root = Pose.create_from_pq(p=cam_tf_root[:3, 3], q=matrix_to_quaternion(cam_tf_root[:3, :3]))
+        # root_tf_cam = cam_tf_root.inv()
+        
+        # print(f"world_tf_root: {world_tf_root}")
+        # world_tf_cam = world_tf_root * root_tf_cam
+        # correct_orientation = axis_angle_to_quaternion(torch.tensor([np.pi/2, 0, 0]))
+        # correct_orientation = quaternion_multiply(correct_orientation, axis_angle_to_quaternion(torch.tensor([0, 0, np.pi/2])))
+        # world_tf_cam.q = quaternion_multiply(world_tf_cam.q, correct_orientation)
+
+        look_at = world_tf_root.raw_pose[0,:3] + torch.tensor([0.,0,0.25])
+        eye = torch.tensor([1.05775+.615, 0, 0.375615])
+        world_tf_cam = sapien_utils.look_at(eye, look_at)
+
+        self.camera_width = 640
+        self.camera_height = 480
+
+        return [CameraConfig("base_camera", world_tf_cam, width=self.camera_width, height=self.camera_height, intrinsic=intrinsics, near=0.01, far=5.0)]
 
     @property
     def _default_human_render_camera_configs(self):
-        pose = sapien_utils.look_at([0.5, -0.5, 0.8], [0.05, -0.1, 0.4])
-        return CameraConfig("render_camera", pose, 512, 512, 1, 0.01, 100)
+        # pose = sapien_utils.look_at([0.5, -0.5, 0.8], [0.05, -0.1, 0.4])
+        world_tf_root = self.agent.robot.get_pose()
+        look_at = world_tf_root.raw_pose[0,:3] + torch.tensor([0.,0,0.25])
+        eye = torch.tensor([1.05775+.1, 0, 0.375615])
+        pose = sapien_utils.look_at(eye, look_at)
+
+        # return CameraConfig("render_camera", pose, 512, 512, 1, 0.01, 100)
+        return CameraConfig("render_camera", pose, 256, 256, 1, 0.01, 5.0)
 
     def _load_agent(self, options: dict):
         super()._load_agent(options, sapien.Pose(p=[-0.615, 0, 0]))
 
     def _load_scene(self, options: dict):
         with torch.device(self.device):
-            self.table_scene = TableSceneBuilder(self)
+            self.table_scene = SimpleTableSceneBuilder(self)
             self.table_scene.build()
+
+            self.target_EE_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="target_EE_pose", body_type="kinematic")
+            self._hidden_objects.append(self.target_EE_pose)
+
+            self.camera_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="camera_pose", body_type="kinematic")
+            self._hidden_objects.append(self.camera_pose)
 
             binding_thickness = 0.005
             cover_thickness = 0.003
             cover_overhang = 0.003
 
+            # self.num_env_books = 8
             self.num_env_books = 8
             self.slot_left_of_book_index = 4
             
@@ -186,6 +237,20 @@ class BookInsertionEnv(BaseEnv):
             self.grasped_book = Actor.merge(grasped_books, "grasped_book")
             self.add_to_state_dict_registry(self.grasped_book)
 
+            # self.grasped_book.set_collision_group_bit(group=2, bit_idx=, bit=1)
+            # fingers is 00000008 (8)    00000000000000000000000000001000
+            # w/o self coll: 20000008    00100000000000000000000000001000
+            # hand is 00000067 (103),    00000000000000000000000001100111
+            # w/o self coll: 20000067    00100000000000000000000001100111
+            # 7th link is 00000034 (52), 00000000000000000000000000110100
+            # w/o self coll: 20000034    00100000000000000000000000110100
+            # 6th link is 00000042 (66), 00000000000000000000000001000010
+            # w/o self coll: 20000042    00100000000000000000000001000010
+            # 5th link is 00000011 (17), 00000000000000000000000000010001
+            # w/o self coll: 20000011    00100000000000000000000000010001
+            # all other links become 20000000 w/o self collision
+            # self.grasped_book.set_collision_group(group=2, value=2147483647)
+
             env_books = []
             for j in range(self.num_env_books):
                 envs_per_env_book = []
@@ -206,13 +271,24 @@ class BookInsertionEnv(BaseEnv):
                     envs_per_env_book.append(env_book)
 
                 env_books.append(envs_per_env_book)
-            
+
+            env_book_collision_indices = [0]
+            for j in range(self.num_env_books-2):
+                env_book_collision_indices.append(env_book_collision_indices[j]+(j+2))
+
+
+            env_book_collision_group = 0
+            for idx in env_book_collision_indices:
+                env_book_collision_group |= 1 << idx
+
             # want to make Nxb env books
                 
             for j in range(self.num_env_books):
                 envs_per_env_book = env_books[j]
                 env_books[j] = Actor.merge(envs_per_env_book, f"book_{j}")
                 self.add_to_state_dict_registry(env_books[j])
+            #     env_books[j].set_collision_group(group=2, value=env_book_collision_group)
+            #     env_book_collision_group = env_book_collision_group << 1
 
             self.env_books = env_books
 
@@ -221,7 +297,7 @@ class BookInsertionEnv(BaseEnv):
             # self.add_to_state_dict_registry(self.peg)
             # self.add_to_state_dict_registry(self.box)
 
-
+            
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):
             b = len(env_idx)
@@ -244,7 +320,8 @@ class BookInsertionEnv(BaseEnv):
             qpos = qpos.repeat(b, 1)
             qpos[:, -2:] = (self.grasped_book_sizes[:, 1])/2 + .001
             self.agent.robot.set_qpos(qpos)
-            self.agent.robot.set_pose(sapien.Pose([-0.615, 0, 0]))
+            # self.agent.robot.set_pose(sapien.Pose([-0.615, 0, 0]))
+            self.agent.robot.set_pose(sapien.Pose([0., 0, 0]))
 
             if self.backend.sim_backend == 'physx_cuda':
                 # ensure all updates to object poses and configurations are applied on GPU after task initialization
@@ -285,6 +362,97 @@ class BookInsertionEnv(BaseEnv):
 
                 self.env_books[j].set_pose(Pose.create_from_pq(pos, quat))   
 
+            # target_EE_pose = self.agent.controller.get_state()['arm']['target_pose']
+            self.target_EE_pose.set_pose(end_effector_pose)
+
+            from mani_skill.utils.geometry.rotation_conversions import matrix_to_quaternion
+            camera_pose = self.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
+            cam_rot = quaternion_multiply(matrix_to_quaternion(camera_pose[:3, :3]), axis_angle_to_quaternion(torch.tensor([np.pi, 0, 0])))
+            self.camera_pose.set_pose(Pose.create_from_pq(p=camera_pose[:3, 3], q=cam_rot))
+
+            self.base_camera_intrinsic = self.scene.sensors['base_camera'].get_params()['intrinsic_cv']
+            self.base_camera_cam2world_gl = self.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
+            self.base_camera_extrinsic_cv = self.scene.sensors['base_camera'].get_params()['extrinsic_cv']
+            # extrinsic cv is bx3x4 so add a row of [0,0,0,1] to make it bx4x4
+            self.base_camera_extrinsic_cv = torch.cat([self.base_camera_extrinsic_cv, torch.tensor([[[0,0,0,1]]])], dim=1)
+
+
+    # def _after_simulation_step(self):
+    #     # update target EE pose
+    #     target_EE_pose = self.agent.controller.get_state()['arm']['target_pose']
+    #     self.target_EE_pose.set_pose(Pose.create_from_pq(target_EE_pose[:, :3], target_EE_pose[:, 3:]))
+
+    def _after_control_step(self):
+        # update target EE pose
+        target_EE_pose_in_root = Pose(self.agent.controller.get_state()['arm']['target_pose'])
+        root_pose = self.agent.robot.get_pose()
+        target_EE_pose = root_pose * target_EE_pose_in_root
+        self.target_EE_pose.set_pose(target_EE_pose)
+    
+    def _get_obs_extra(self, info):
+        extra = dict()
+        # if 'contact' in self._obs_mode:
+        extra['extrinsic_contact_positions'] = self.get_extrinsic_contact_positions()
+        # extra['extrinsic_contact_map'] = self.project_contact_positions_to_camera(extra['extrinsic_contact_positions'])
+        # contact_positions = self.get_extrinsic_contact_positions()
+
+        return extra
+
+    def project_contact_positions_to_camera(self, contact_positions):
+        # TODO extend to multiple envs
+        # contact_positions: bxNx3
+        b, N, _ = contact_positions.shape
+        contact_map = torch.zeros((b, self.camera_height, self.camera_width), device=contact_positions.device)
+        # convert contact positions to camera frame
+        if N > 0:
+            contact_positions = einops.rearrange(contact_positions, 'b n c -> (b n) c')
+            # bx4x4 @ b*Nx3 -> b*Nx3
+            # contact_positions_in_cam = transform_points(contact_positions, self.base_camera_extrinsic_cv)
+            contact_positions_in_cam = torch.cat([contact_positions, torch.ones((b*N, 1), device=contact_positions.device)], dim=1)
+            contact_positions_in_cam = einops.rearrange(torch.bmm(self.base_camera_extrinsic_cv, (contact_positions_in_cam.T).unsqueeze(0)), 'b c n -> (b n) c')[..., :3]
+            # project to image plane
+            # bx3x3 @ b*Nx3 -> bxNx3
+            projected_points = einops.rearrange(torch.bmm(self.base_camera_intrinsic, (contact_positions_in_cam.T).unsqueeze(0)), 'b c n -> (b n) c')
+            projected_points = projected_points[..., :2] / projected_points[..., 2:]
+            # b*Nx2
+            projected_points = einops.rearrange(projected_points, '(b n) c -> b n c', b=b, n=N)
+
+            # filter out points outside of image plane
+            projected_points = projected_points.int()
+            valid_points = (projected_points[..., 0] >= 0) & (projected_points[..., 0] < self.camera_width) & (projected_points[..., 1] >= 0) & (projected_points[..., 1] < self.camera_height)
+            projected_points = projected_points[valid_points]
+
+            # swap u and v to match image coordinates
+            projected_points = projected_points[..., [1, 0]]
+            # add index for batch dimension
+            projected_points = torch.cat([torch.zeros((projected_points.shape[0], 1), device=projected_points.device, dtype=torch.int), projected_points], dim=1)
+            # index into contact_map and set valid points to 1
+            contact_map[tuple(projected_points.T)] = 1
+        return contact_map
+
+    def get_extrinsic_contact_positions(self):
+        assert self.num_envs == 1, "Only supports single envs for now"
+        # TODO extend to multiple envs
+        contact_positions = list()
+        contacts = self.scene.get_contacts()
+        filtered_contacts = list()
+        # filter contacts to only include contacts between grasped_book
+        if len(contacts) > 0:
+            for contact in contacts:
+                if 'grasped_book' in contact.bodies[0].entity.name or 'grasped_book' in contact.bodies[1].entity.name:
+                    # and not contact panda
+                    if 'panda' not in contact.bodies[0].entity.name and 'panda' not in contact.bodies[1].entity.name:
+                        filtered_contacts.append(contact)
+        contacts = filtered_contacts
+        if len(contacts) > 0:
+            for contact in contacts:
+                for contact_point in contact.points:
+                    if np.linalg.norm(contact_point.impulse) > 0:
+                        contact_positions.append(torch.from_numpy(contact_point.position))
+                # contact_positions.extend([torch.from_numpy(contact_point.position) for contact_point in contact.points])
+        contact_positions = torch.stack(contact_positions) if len(contact_positions) > 0 else torch.zeros((0,3))
+        return contact_positions.unsqueeze(0) # bxNx3
+    
     # # save some commonly used attributes
     # @property
     # def peg_head_pos(self):
