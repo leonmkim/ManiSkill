@@ -59,6 +59,9 @@ class SpacemouseInput:
         self.read_spacemouse_process = multiprocessing.Process(target=self.read_spacemouse)
         self.read_spacemouse_process.start()
     
+    def reset(self):
+        self.gripper_action = -1 if self.start_gripper_closed else 1
+
     def read_spacemouse(self):
         while True:
             state = pyspacemouse.read()
@@ -164,16 +167,16 @@ human_render_cam_extrinsic_cv = human_render_cam_params['extrinsic_cv'][0]
 base_camera_cam2world_gl = env.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
 base_camera_extrinsic_cv = env.scene.sensors['base_camera'].get_params()['extrinsic_cv'][0]
 #%% 
-segmentation_id_exclusion_list = list()
-for i in range(9):
-    segmentation_id_exclusion_list.append(f"panda_link{i}")
-segmentation_id_exclusion_list.extend(["panda_hand", "panda_hand_tcp", "panda_leftfinger", "panda_rightfinger", "panda_leftfinger_pad", "panda_rightfinger_pad"])
-segmentation_id_exclusion_list.extend(["target_EE_pose", "camera_pose"])
-segmentation_map_ids = dict()
-for key, value in env.segmentation_id_map.items():
-    entity_name = value.name
-    if entity_name not in segmentation_id_exclusion_list:
-        segmentation_map_ids[entity_name] = key
+# segmentation_id_exclusion_list = list()
+# for i in range(9):
+#     segmentation_id_exclusion_list.append(f"panda_link{i}")
+# segmentation_id_exclusion_list.extend(["panda_hand", "panda_hand_tcp", "panda_leftfinger", "panda_rightfinger", "panda_leftfinger_pad", "panda_rightfinger_pad"])
+# segmentation_id_exclusion_list.extend(["target_EE_pose", "camera_pose"])
+# segmentation_map_ids = dict()
+# for key, value in env.segmentation_id_map.items():
+#     entity_name = value.name
+#     if entity_name not in segmentation_id_exclusion_list:
+#         segmentation_map_ids[entity_name] = key
 
 # %%
 obs, info = env.reset(seed=seed)
@@ -186,7 +189,7 @@ obs, info = env.reset(seed=seed)
 # cv2.namedWindow("frame", cv2.WINDOW_AUTOSIZE)
 
 # frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
-# frame = (frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()[..., None]*255*0.5).astype(np.uint8)
+# frame = (frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
 # frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
 # frame = cv2.cvtColor(env.render()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
 
@@ -212,12 +215,14 @@ while True:
         # current_frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
         # current_frame = obs['sensor_data']['base_camera']['Color'][0][:,:,:3].cpu().numpy()
 
-        # current_frame = (current_frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()[..., None]*255*0.5).astype(np.uint8)
+        # current_frame = (current_frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
         # current_frame = cv2.resize(current_frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
 
         # cv2.imshow("frame", current_frame)
         # key = cv2.waitKey(1) & 0xFF
         # if key == ord('q') or key == ord('c') or key == ord('r'):
+        #     break
+        
         if viewer.window.key_press('q'):
             # q: quit the script and stop collecting data. Save trajectories and optionally videos.
             # c: stop this episode and record the trajectory and move on to a new episode
@@ -237,8 +242,8 @@ while True:
         elapsed_realtime = time.perf_counter() - start_time
         # time_to_sleep = sim_dt_bw_step - elapsed_time
         time_to_sleep = elapsed_simtime - elapsed_realtime
-        # if time_to_sleep > 0:
-        #     time.sleep(time_to_sleep)
+        if time_to_sleep > 0:
+            time.sleep(time_to_sleep)
         if elapsed_timesteps % 100 == 0:
             print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
     
@@ -251,10 +256,12 @@ while True:
             num_trajs += 1
             env.reset(seed=seed)
             viewer = env.render_human()
+            spacemouse_input.reset()
             continue
         elif key == ord('r'):
             env.reset(seed=seed, options=dict(save_trajectory=False))
             viewer = env.render_human()
+            spacemouse_input.reset()
             continue
     else:
         break
@@ -269,3 +276,5 @@ env.close()
 del env
 
 spacemouse_input.close()
+
+# TODO: try adding contact map to extra states and the end effector pose (to get back observation.state)

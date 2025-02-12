@@ -196,7 +196,7 @@ class BookInsertionEnv(BaseEnv):
             self._hidden_objects.append(self.camera_pose)
 
             grasped_book_lengths = self._batched_episode_rng.uniform(0.1, 0.15)
-            grasped_book_widths = self._batched_episode_rng.uniform(0.02, 0.06) # max gripper width is .08
+            grasped_book_widths = self._batched_episode_rng.uniform(0.03, 0.065) # max gripper width is .08
             grasped_book_heights = self._batched_episode_rng.uniform(0.15, 0.25)
             grasped_book_densities = self._batched_episode_rng.uniform(650, 850)
             grasped_book_colors = np.ones((self.num_envs, 4))
@@ -411,37 +411,58 @@ class BookInsertionEnv(BaseEnv):
         extra = dict()
         # if 'contact' in self._obs_mode:
         extra['extrinsic_contact_positions'] = self.get_extrinsic_contact_positions()
-        # extra['extrinsic_contact_map'] = self.project_contact_positions_to_camera(extra['extrinsic_contact_positions'])
-        # contact_positions = self.get_extrinsic_contact_positions()
+        extra['extrinsic_contact_map'] = self.project_contact_positions_to_camera(extra['extrinsic_contact_positions'])
+
+        # get current end effector pose
+        end_effector_pose = self.agent.tcp.pose.raw_pose # bx7
+
+        extra['end_effector_pose'] = end_effector_pose
+
+        # get end_effector pixel coordinates
+        extra['end_effector_pixel_coordinates'] = self.batched_position_to_pixel_coordinates(end_effector_pose[:, :3].unsqueeze(1)).squeeze(1)
 
         return extra
+    
+    def batched_position_to_pixel_coordinates(self, positions):
+        # positions: bxNx3
+        assert positions.shape[-1] == 3, "positions must have shape bxNx3"
+        b, N, _ = positions.shape
+        positions = einops.rearrange(positions, 'b n c -> (b n) c')
+        # bx4x4 @ b*Nx3 -> b*Nx3
+        # contact_positions_in_cam = transform_points(contact_positions, self.base_camera_extrinsic_cv)
+        positions_in_cam = torch.cat([positions, torch.ones((b*N, 1), device=positions.device)], dim=1)
+        positions_in_cam = einops.rearrange(torch.bmm(self.base_camera_extrinsic_cv, (positions_in_cam.T).unsqueeze(0)), 'b c n -> (b n) c')[..., :3]
+        # project to image plane
+        # bx3x3 @ b*Nx3 -> bxNx3
+        projected_points = einops.rearrange(torch.bmm(self.base_camera_intrinsic, (positions_in_cam.T).unsqueeze(0)), 'b c n -> (b n) c')
+        projected_points = projected_points[..., :2] / projected_points[..., 2:]
+        # b*Nx2
+        projected_points = einops.rearrange(projected_points, '(b n) c -> b n c', b=b, n=N)
 
+        # filter out points outside of image plane
+        projected_points = projected_points.int()
+        
+        return projected_points
+            
     def project_contact_positions_to_camera(self, contact_positions):
         # TODO extend to multiple envs
         # contact_positions: bxNx3
+        # filter out nan rows
         b, N, _ = contact_positions.shape
-        contact_map = torch.zeros((b, self.camera_height, self.camera_width), device=contact_positions.device)
+        contact_positions = contact_positions[~torch.any(torch.isnan(contact_positions), dim=2)].reshape(b, -1, 3)
+        b, N, _ = contact_positions.shape
+        contact_map = torch.zeros((b, self.camera_height, self.camera_width, 1), device=contact_positions.device)
         # convert contact positions to camera frame
         if N > 0:
-            contact_positions = einops.rearrange(contact_positions, 'b n c -> (b n) c')
-            # bx4x4 @ b*Nx3 -> b*Nx3
-            # contact_positions_in_cam = transform_points(contact_positions, self.base_camera_extrinsic_cv)
-            contact_positions_in_cam = torch.cat([contact_positions, torch.ones((b*N, 1), device=contact_positions.device)], dim=1)
-            contact_positions_in_cam = einops.rearrange(torch.bmm(self.base_camera_extrinsic_cv, (contact_positions_in_cam.T).unsqueeze(0)), 'b c n -> (b n) c')[..., :3]
-            # project to image plane
-            # bx3x3 @ b*Nx3 -> bxNx3
-            projected_points = einops.rearrange(torch.bmm(self.base_camera_intrinsic, (contact_positions_in_cam.T).unsqueeze(0)), 'b c n -> (b n) c')
-            projected_points = projected_points[..., :2] / projected_points[..., 2:]
-            # b*Nx2
-            projected_points = einops.rearrange(projected_points, '(b n) c -> b n c', b=b, n=N)
-
-            # filter out points outside of image plane
-            projected_points = projected_points.int()
-            valid_points = (projected_points[..., 0] >= 0) & (projected_points[..., 0] < self.camera_width) & (projected_points[..., 1] >= 0) & (projected_points[..., 1] < self.camera_height)
-            projected_points = projected_points[valid_points]
-
+            projected_points = self.batched_position_to_pixel_coordinates(contact_positions)
+            
             # swap u and v to match image coordinates
             projected_points = projected_points[..., [1, 0]]
+            
+            # filter out points outside of image plane
+            valid_points = (projected_points[..., 0] >= 0) & (projected_points[..., 0] < self.camera_height) & (projected_points[..., 1] >= 0) & (projected_points[..., 1] < self.camera_width)
+            projected_points = projected_points[valid_points]
+
             # add index for batch dimension
             projected_points = torch.cat([torch.zeros((projected_points.shape[0], 1), device=projected_points.device, dtype=torch.int), projected_points], dim=1)
             # index into contact_map and set valid points to 1

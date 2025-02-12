@@ -413,10 +413,19 @@ class RecordEpisodeZarr(gym.Wrapper):
         data_group.create_dataset('observation.rgb', shape=(0,) + (self.num_envs,) + image_obs_shape + (3,), dtype=np.uint8, chunks=(1,) + (self.num_envs,) + image_obs_shape + (3,), overwrite=True)#, compressor=self.zarr_compressor)
         data_group.create_dataset('observation.depth', shape=(0,) + (self.num_envs,) + image_obs_shape + (1,), dtype=np.uint16, chunks=(1,) + (self.num_envs,) + image_obs_shape + (1,), overwrite=True)#, compressor=self.zarr_compressor)
         data_group.create_dataset('observation.segmentation', shape=(0,) + (self.num_envs,) + image_obs_shape + (1,), dtype=np.uint16, chunks=(1,) + (self.num_envs,) + image_obs_shape + (1,), overwrite=True)#, compressor=self.zarr_compressor)
+        data_group.create_dataset('observation.contact_map', shape=(0,) + (self.num_envs,) + image_obs_shape + (1,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + image_obs_shape + (1,), overwrite=True)#, compressor=self.zarr_compressor)
+        
+        current_pose_shape = obs['extra']['end_effector_pose'].shape[2:]
+        state_shape = list(current_pose_shape)
+        state_shape[0] += 1 # for gripper width
+        state_shape = tuple(state_shape)
+        data_group.create_dataset('observation.state', shape=(0,) + (self.num_envs,) + state_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + state_shape, overwrite=True)#, compressor=self.zarr_compressor)
+        data_group.create_dataset('observation.EE_pixel_coord', shape=(0,) + (self.num_envs,) + (2,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (2,), overwrite=True)#, compressor=self.zarr_compressor)
+        
+        target_pose_shape = obs['agent']['controller']['arm']['target_pose'].shape[2:]
+        data_group.create_dataset('observation.target_pose', shape=(0,) + (self.num_envs,) + target_pose_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + target_pose_shape, overwrite=True)#, compressor=self.zarr_compressor)
 
-        # state_pose_shape = obs['']
-        # data_group.create_dataset('observation.state', shape=(0,) + (self.num_envs,) + obs
-
+        # the normalized action as accepted by the maniskill controller
         action_shape = action.shape[2:]
         data_group.create_dataset('action', shape=(0,) + (self.num_envs,) + action_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + action_shape, overwrite=True)#, compressor=self.zarr_compressor)
 
@@ -433,6 +442,16 @@ class RecordEpisodeZarr(gym.Wrapper):
         meta_group.create_dataset('env_episode_ptr', shape=(0,), dtype=np.int32, overwrite=True)#, compressor=self.zarr_compressor)
         meta_group['env_episode_ptr'].append(np.zeros((self.num_envs), dtype=np.int32))
 
+        meta_group.create_dataset('episode_cam_K', shape=(0,) + (self.num_envs,) + (3, 3), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (3, 3), overwrite=True)#, compressor=self.zarr_compressor)
+        meta_group['episode_cam_K'].append(obs['sensor_param']['base_camera']['intrinsic_cv'])
+
+        meta_group.create_dataset('episode_cam_tf_world', shape=(0,) + (self.num_envs,) + (4, 4), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (4, 4), overwrite=True)#, compressor=self.zarr_compressor)
+        cam_tf_world = obs['sensor_param']['base_camera']['extrinsic_cv'] # bxNx3x4 where N is number of cameras?
+        # need to add the last row for the homogeneous coordinates
+        cam_tf_world = np.concatenate([cam_tf_world, np.zeros((1, self.num_envs, 1, 4), dtype=np.float32)], axis=2)
+        cam_tf_world[:, :, 3, 3] = 1.0
+        meta_group['episode_cam_tf_world'].append(cam_tf_world)
+
         if env_state_dict is not None:
             self.recursive_add_env_states_to_trajectory_buffer(data_group, env_state_dict)
 
@@ -447,6 +466,16 @@ class RecordEpisodeZarr(gym.Wrapper):
         trajectory_buffer_data_group['observation.rgb'].append(obs['sensor_data']['base_camera']['rgb'])
         trajectory_buffer_data_group['observation.depth'].append(obs['sensor_data']['base_camera']['depth'])
         trajectory_buffer_data_group['observation.segmentation'].append(obs['sensor_data']['base_camera']['segmentation'])
+        trajectory_buffer_data_group['observation.contact_map'].append(obs['extra']['extrinsic_contact_map'])
+
+        current_pose = obs['extra']['end_effector_pose']
+        gripper_width = np.sum(obs['agent']['qpos'][:,:,-2:], axis=-1, keepdims=True)
+        state = np.concatenate([current_pose, gripper_width], axis=-1)
+        trajectory_buffer_data_group['observation.state'].append(state)
+
+        trajectory_buffer_data_group['observation.target_pose'].append(obs['agent']['controller']['arm']['target_pose'])
+        trajectory_buffer_data_group['observation.EE_pixel_coord'].append(obs['extra']['end_effector_pixel_coordinates'])
+
         trajectory_buffer_data_group['action'].append(action)
         if env_state_dict is not None:
             self.recursive_add_env_states_to_trajectory_buffer(trajectory_buffer_data_group, env_state_dict)
@@ -507,10 +536,11 @@ class RecordEpisodeZarr(gym.Wrapper):
             if self._trajectory_buffer is not None:
             # if we store in memory and its not empty, then we need to write it to disk
                 if "env_idx" not in options:
-                    self.flush_trajectory(env_idxs_to_flush=np.arange(self.num_envs))
+                    self.flush_trajectory(env_idxs_to_flush=np.arange(self.num_envs), save=options.get("save_trajectory", self.save_trajectory))
                 else:
                     self.flush_trajectory(
-                        env_idxs_to_flush=common.to_numpy(options["env_idx"])
+                        env_idxs_to_flush=common.to_numpy(options["env_idx"]),
+                        save=options.get("save_trajectory", self.save_trajectory)
                     )
 
         obs, info = super().reset(*args, seed=seed, options=options, **kwargs)
@@ -837,6 +867,14 @@ class RecordEpisodeZarr(gym.Wrapper):
                     control_mode=self.base_env.control_mode,
                     elapsed_steps=end_ptr - start_ptr - 1,
                 )
+
+                segmentation_id_map = dict()
+                for key, value in self.env.segmentation_id_map.items():
+                    entity_name = value.name
+                    segmentation_id_map[entity_name] = key
+
+                episode_info.update(segmentation_id_map=segmentation_id_map)
+
                 if self.num_envs == 1:
                     episode_info.update(reset_kwargs=self.last_reset_kwargs)
                 else:
@@ -926,6 +964,14 @@ class RecordEpisodeZarr(gym.Wrapper):
                 if len(self.meta_group['episode_ends']) > 0:
                     prev_episode_end = self.meta_group['episode_ends'][-1]
                 self.meta_group['episode_ends'].append(np.array([end_ptr - start_ptr - 1 + prev_episode_end], dtype=np.int32))
+
+                if 'episode_cam_K' not in self.meta_group:
+                    self.meta_group.create_dataset('episode_cam_K', shape=(0,) + (3, 3), dtype=np.float32, chunks=(1,) + (3, 3), overwrite=True)
+                self.meta_group['episode_cam_K'].append(self._trajectory_buffer.meta['episode_cam_K'][env_idx])
+
+                if 'episode_cam_tf_world' not in self.meta_group:
+                    self.meta_group.create_dataset('episode_cam_tf_world', shape=(0,) + (4, 4), dtype=np.float32, chunks=(1,) + (4, 4), overwrite=True)
+                self.meta_group['episode_cam_tf_world'].append(self._trajectory_buffer.meta['episode_cam_tf_world'][env_idx])
 
                 # NOTE: done and env states are not trimmed
 
@@ -1064,7 +1110,7 @@ class RecordEpisodeZarr(gym.Wrapper):
                 )
             if self.clean_on_close:
                 # TODO: implement clean_trajectories for zarr
-                clean_trajectories(self._h5_file, self._json_data)
+                clean_trajectories(self.zarr_root, self._json_data)
                 dump_json(self._json_path, self._json_data, indent=2)
             # self._h5_file.close()
         if self.save_video:
