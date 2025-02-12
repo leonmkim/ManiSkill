@@ -14,6 +14,8 @@ from mani_skill.utils.io_utils import load_json
 from mani_skill.trajectory.utils import index_dict, dict_to_list_of_dicts
 from mani_skill.utils.visualization.misc import images_to_video
 from mani_skill.utils.wrappers.record import RecordEpisode
+from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
+
 import multiprocessing
 
 from pathlib import Path
@@ -111,7 +113,7 @@ record_demonstrations = True
 env = gym.make(
     # "LiftPegUpright-v1", 
     "BookInsertion-v0", 
-    # slot_left_of_book_index=6,
+    cam_resize_factor=0.5,
     reward_mode="none", 
     sim_backend='physx_cpu', 
     # render_mode="rgb_array", 
@@ -138,7 +140,8 @@ env = gym.make(
     )
 )
 if record_demonstrations:
-    env = RecordEpisode(
+    # env = RecordEpisode(
+    env = RecordEpisodeZarr(
         env,
         output_dir=output_dir,
         save_video=False,
@@ -247,17 +250,20 @@ while True:
             seed += 1
             num_trajs += 1
             env.reset(seed=seed)
+            viewer = env.render_human()
             continue
         elif key == ord('r'):
             env.reset(seed=seed, options=dict(save_trajectory=False))
+            viewer = env.render_human()
+            continue
     else:
         break
 
 cv2.destroyAllWindows()
 #%%
-if record_demonstrations:
-    h5_file_path = env._h5_file.copy
-    json_file_path = env._json_path
+# if record_demonstrations:
+#     h5_file_path = env._h5_file.copy
+#     json_file_path = env._json_path
 
 env.close()
 del env

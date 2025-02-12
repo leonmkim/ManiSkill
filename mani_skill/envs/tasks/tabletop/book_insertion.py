@@ -89,6 +89,10 @@ class BookInsertionEnv(BaseEnv):
     cover_thickness: float = 0.003
     cover_overhang: float = 0.005
 
+    cam_resize_factor: float = 0.5
+
+    max_extrinsic_contacts: int = 100 # for padding
+
     def __init__(
         self,
         *args,
@@ -104,11 +108,11 @@ class BookInsertionEnv(BaseEnv):
                 reconfiguration_freq = 0
         
         # get list of specific kwargs defined above
-        special_kwargs = ['num_env_books', 'slot_left_of_book_index']
-        for key in special_kwargs:
-            if key in kwargs:
-                setattr(self, key, kwargs[key])
-                del kwargs[key]
+        # special_kwargs = ['num_env_books', 'slot_left_of_book_index', 'cam_resize_factor']
+        # for key in special_kwargs:
+        #     if key in kwargs:
+        #         setattr(self, key, kwargs[key])
+        #         del kwargs[key]
 
         super().__init__(
             *args,
@@ -126,9 +130,15 @@ class BookInsertionEnv(BaseEnv):
     def _default_sensor_configs(self):
         from mani_skill.utils.geometry.rotation_conversions import matrix_to_quaternion
         # pose = sapien_utils.look_at([0, -0.3, 0.2], [0, 0, 0.1])
+        self.camera_width = 640
+        self.camera_height = 480
         intrinsics = torch.tensor([[596.61175537,0.,323.86328125],
                                 [0.,596.96472168,246.78981018],
                                 [0.,0.,1.]])
+        if self.cam_resize_factor != 1.0:
+            intrinsics[:2, :3] *= self.cam_resize_factor
+            self.camera_width = int(self.camera_width * self.cam_resize_factor)
+            self.camera_height = int(self.camera_height * self.cam_resize_factor)
         
         world_tf_root = self.agent.robot.get_pose()
 
@@ -157,9 +167,6 @@ class BookInsertionEnv(BaseEnv):
         look_at = world_tf_root.raw_pose[0,:3] + torch.tensor([0.,0,0.25])
         eye = torch.tensor([1.05775+.615, 0, 0.375615])
         world_tf_cam = sapien_utils.look_at(eye, look_at)
-
-        self.camera_width = 640
-        self.camera_height = 480
 
         return [CameraConfig("base_camera", world_tf_cam, width=self.camera_width, height=self.camera_height, intrinsic=intrinsics, near=0.01, far=5.0)]
 
@@ -444,25 +451,29 @@ class BookInsertionEnv(BaseEnv):
     def get_extrinsic_contact_positions(self):
         assert self.num_envs == 1, "Only supports single envs for now"
         # TODO extend to multiple envs
-        contact_positions = list()
+        contact_positions = torch.nan*torch.ones((1, self.max_extrinsic_contacts, 3), device=self.device)
         contacts = self.scene.get_contacts()
         filtered_contacts = list()
         # filter contacts to only include contacts between grasped_book
         if len(contacts) > 0:
             for contact in contacts:
-                if 'grasped_book' in contact.bodies[0].entity.name or 'grasped_book' in contact.bodies[1].entity.name:
+                body_name_0 = contact.bodies[0].entity.name
+                body_name_1 = contact.bodies[1].entity.name
+                if 'grasped_book' in body_name_0 or 'grasped_book' in body_name_1:
                     # and not contact panda
-                    if 'panda' not in contact.bodies[0].entity.name and 'panda' not in contact.bodies[1].entity.name:
+                    if 'panda' not in body_name_0 and 'panda' not in body_name_1:
                         filtered_contacts.append(contact)
         contacts = filtered_contacts
+        contact_idx = 0
         if len(contacts) > 0:
             for contact in contacts:
                 for contact_point in contact.points:
                     if np.linalg.norm(contact_point.impulse) > 0:
-                        contact_positions.append(torch.from_numpy(contact_point.position))
+                        contact_positions[0, contact_idx] = torch.from_numpy(contact_point.position)
+                        contact_idx += 1
+                        # torch.from_numpy(contact_point.position)
                 # contact_positions.extend([torch.from_numpy(contact_point.position) for contact_point in contact.points])
-        contact_positions = torch.stack(contact_positions) if len(contact_positions) > 0 else torch.zeros((0,3))
-        return contact_positions.unsqueeze(0) # bxNx3
+        return contact_positions # bxNx3
     
     # # save some commonly used attributes
     # @property

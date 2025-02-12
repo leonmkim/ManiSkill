@@ -5,7 +5,14 @@ from pathlib import Path
 from typing import Callable, List, Optional, Union
 
 import gymnasium as gym
+
 import h5py
+import zarr
+from numcodecs import blosc
+import zarr.hierarchy
+blosc.set_nthreads(24)
+blosc.use_threads = True
+
 import numpy as np
 import sapien.physx as physx
 import torch
@@ -52,7 +59,11 @@ def temp_deep_print_shapes(x, prefix=""):
         print(prefix, x.shape)
 
 
-def clean_trajectories(h5_file: h5py.File, json_dict: dict, prune_empty_action=True):
+def clean_trajectories(
+        # h5_file: h5py.File, 
+        zarr_root: zarr.hierarchy.Group,
+        json_dict: dict, prune_empty_action=True
+        ):
     """Clean trajectories by renaming and pruning trajectories in place.
 
     After cleanup, trajectory names are consecutive integers (traj_0, traj_1, ...),
@@ -64,11 +75,13 @@ def clean_trajectories(h5_file: h5py.File, json_dict: dict, prune_empty_action=T
         prune_empty_action: whether to prune trajectories with empty action
     """
     json_episodes = json_dict["episodes"]
-    assert len(h5_file) == len(json_episodes)
+    # assert len(h5_file) == len(json_episodes)
+    assert len(zarr_root.meta.episode_ends) == len(json_episodes)
 
     # Assumes each trajectory is named "traj_{i}"
     prefix_length = len("traj_")
-    ep_ids = sorted([int(x[prefix_length:]) for x in h5_file.keys()])
+    # ep_ids = sorted([int(x[prefix_length:]) for x in h5_file.keys()])
+    ep_ids = sorted([int(x[prefix_length:]) for x in zarr_root.meta.ep_ids])
 
     new_json_episodes = []
     new_ep_id = 0
@@ -80,10 +93,28 @@ def clean_trajectories(h5_file: h5py.File, json_dict: dict, prune_empty_action=T
         new_traj_id = f"traj_{new_ep_id}"
 
         if prune_empty_action and ep["elapsed_steps"] == 0:
-            del h5_file[traj_id]
+            raise NotImplementedError
+            # del h5_file[traj_id]
+            if i - 1 < 0:
+                start = 0
+            else:
+                start = zarr_root.meta.episode_ends[i-1]
+            end = zarr_root.meta.episode_ends[i]
+            # del zarr_root.data.observation[start:end]
+            # del zarr_root.data.action[start:end]
+            # del zarr_root.data.reward[start:end]
+            # del zarr_root.data.terminated[start:end]
+            # del zarr_root.data.truncated[start:end]
+            # del zarr_root.data.done[start:end]
+            # if "success" in zarr_root.data:
+            #     del zarr_root.data.success[start:end]
+            # if "fail" in zarr_root.data:
+            #     del zarr_root.data.fail[start:end]
+            # del zarr_root.data.env_episode_ptr[i]
             continue
 
         if new_traj_id != traj_id:
+            raise NotImplementedError
             ep["episode_id"] = new_ep_id
             h5_file[new_traj_id] = h5_file[traj_id]
             del h5_file[traj_id]
@@ -232,6 +263,8 @@ class RecordEpisodeZarr(gym.Wrapper):
         avoid_overwriting_video: bool = False,
         source_type: Optional[str] = None,
         source_desc: Optional[str] = None,
+        store_in_memory: bool = True,
+        zarr_compression_level: int = 3,
     ) -> None:
         super().__init__(env)
 
@@ -244,10 +277,11 @@ class RecordEpisodeZarr(gym.Wrapper):
         self._video_id = -1
         self._video_steps = 0
         self._closed = False
+        self._store_in_memory = store_in_memory
 
         self.save_video_trigger = save_video_trigger
 
-        self._trajectory_buffer: Step = None
+        # self._trajectory_buffer: Step = None
 
         self.max_steps_per_video = max_steps_per_video
         self.max_episode_steps = gym_utils.find_max_episode_steps_value(env)
@@ -268,10 +302,21 @@ class RecordEpisodeZarr(gym.Wrapper):
             if not trajectory_name:
                 trajectory_name = time.strftime("%Y%m%d_%H%M%S")
 
-            self._h5_file = h5py.File(self.output_dir / f"{trajectory_name}.h5", "w")
+            # self._h5_file = h5py.File(self.output_dir / f"{trajectory_name}.h5", "w")
+            self.filename = str(self.output_dir / f"{trajectory_name}.zarr")
+            self.zarr_storage = zarr.DirectoryStore(
+                self.filename
+            )
+            self.zarr_root = zarr.group(store=self.zarr_storage)
+            self.data_group = self.zarr_root.create_group("data")
+            self.meta_group = self.zarr_root.create_group("meta")
+
+            self.zarr_compressor = blosc.Blosc(cname="zstd", clevel=zarr_compression_level, shuffle=1)
+
+            self._trajectory_buffer = None
 
             # Use a separate json to store non-array data
-            self._json_path = self._h5_file.filename.replace(".h5", ".json")
+            self._json_path = self.filename.replace(".zarr", ".json")
             self._json_data = dict(
                 env_info=parse_env_info(self.env),
                 commit_info=get_commit_info(),
@@ -353,6 +398,100 @@ class RecordEpisodeZarr(gym.Wrapper):
                 img = tile_images(img, nrows=self.video_nrows)
         return img
 
+    def create_new_trajectory_buffer(self):
+        trajectory_buffer = zarr.MemoryStore()
+        trajectory_root = zarr.group(store=trajectory_buffer)
+        trajectory_root.create_group("data")
+        return trajectory_root
+    
+    def create_and_initialize_new_trajectory_buffer(self, obs, action, env_state_dict=None):
+        trajectory_buffer = self.create_new_trajectory_buffer()
+        data_group = trajectory_buffer["data"]
+        meta_group = trajectory_buffer.create_group("meta")
+        
+        image_obs_shape = obs['sensor_data']['base_camera']['rgb'].shape[2:4]
+        data_group.create_dataset('observation.rgb', shape=(0,) + (self.num_envs,) + image_obs_shape + (3,), dtype=np.uint8, chunks=(1,) + (self.num_envs,) + image_obs_shape + (3,), overwrite=True)#, compressor=self.zarr_compressor)
+        data_group.create_dataset('observation.depth', shape=(0,) + (self.num_envs,) + image_obs_shape + (1,), dtype=np.uint16, chunks=(1,) + (self.num_envs,) + image_obs_shape + (1,), overwrite=True)#, compressor=self.zarr_compressor)
+        data_group.create_dataset('observation.segmentation', shape=(0,) + (self.num_envs,) + image_obs_shape + (1,), dtype=np.uint16, chunks=(1,) + (self.num_envs,) + image_obs_shape + (1,), overwrite=True)#, compressor=self.zarr_compressor)
+
+        # state_pose_shape = obs['']
+        # data_group.create_dataset('observation.state', shape=(0,) + (self.num_envs,) + obs
+
+        action_shape = action.shape[2:]
+        data_group.create_dataset('action', shape=(0,) + (self.num_envs,) + action_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + action_shape, overwrite=True)#, compressor=self.zarr_compressor)
+
+        if self.record_reward:
+            data_group.create_dataset('reward', shape=(0,) + (self.num_envs,), dtype=np.float32, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
+    
+        data_group.create_dataset('terminated', shape=(0,) + (self.num_envs,), dtype=bool, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
+        data_group.create_dataset('truncated', shape=(0,) + (self.num_envs,), dtype=bool, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
+        meta_group.create_dataset('done', shape=(0,) + (self.num_envs,), dtype=bool, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
+
+        data_group.create_dataset('success', shape=(0,) + (self.num_envs,), dtype=bool, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
+        data_group.create_dataset('fail', shape=(0,) + (self.num_envs,), dtype=bool, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
+
+        meta_group.create_dataset('env_episode_ptr', shape=(0,), dtype=np.int32, overwrite=True)#, compressor=self.zarr_compressor)
+        meta_group['env_episode_ptr'].append(np.zeros((self.num_envs), dtype=np.int32))
+
+        if env_state_dict is not None:
+            self.recursive_add_env_states_to_trajectory_buffer(data_group, env_state_dict)
+
+        self.add_to_existing_trajectory_buffer(trajectory_buffer, obs, action)
+
+        return trajectory_buffer
+    
+    def add_to_existing_trajectory_buffer(self, trajectory_buffer, obs, action, reward=None, terminated=None, truncated=None, done=None, success=None, fail=None, env_state_dict=None):
+        trajectory_buffer_data_group = trajectory_buffer['data']
+        trajectory_buffer_meta_group = trajectory_buffer['meta']
+
+        trajectory_buffer_data_group['observation.rgb'].append(obs['sensor_data']['base_camera']['rgb'])
+        trajectory_buffer_data_group['observation.depth'].append(obs['sensor_data']['base_camera']['depth'])
+        trajectory_buffer_data_group['observation.segmentation'].append(obs['sensor_data']['base_camera']['segmentation'])
+        trajectory_buffer_data_group['action'].append(action)
+        if env_state_dict is not None:
+            self.recursive_add_env_states_to_trajectory_buffer(trajectory_buffer_data_group, env_state_dict)
+
+        if self.record_reward:
+            if reward is None:
+                reward = np.zeros((1, self.num_envs), dtype=np.float32)
+            trajectory_buffer_data_group['reward'].append(reward)
+        
+        if terminated is None:
+            terminated = np.ones((1, self.num_envs), dtype=bool)
+        trajectory_buffer_data_group['terminated'].append(terminated)
+        if truncated is None:
+            truncated = np.ones((1, self.num_envs), dtype=bool)
+        trajectory_buffer_data_group['truncated'].append(truncated)
+        
+        if done is None:
+            done = np.ones((1, self.num_envs), dtype=bool)
+        trajectory_buffer_meta_group['done'].append(done)
+        
+        if 'success' in trajectory_buffer_data_group:
+            if success is None:
+                success = np.zeros((1, self.num_envs), dtype=bool)
+            trajectory_buffer_data_group['success'].append(np.zeros((1, self.num_envs), dtype=bool))
+    
+        if 'fail' in trajectory_buffer_data_group:
+            if fail is None:
+                fail = np.zeros((1, self.num_envs), dtype=bool)
+            trajectory_buffer_data_group['fail'].append(fail)
+
+    def recursive_add_env_states_to_trajectory_buffer(self, trajectory_buffer_data_group, env_states_dict):
+        # if 'env_states' not in trajectory_buffer_data_group:
+        #     trajectory_buffer_data_group.create_group('env_states')
+        # trajectory_buffer_data_group = trajectory_buffer_data_group['env_states']
+        for k, v in env_states_dict.items():
+            if isinstance(v, dict):
+                if k not in trajectory_buffer_data_group:
+                    trajectory_buffer_data_group.create_group(k)
+                self.recursive_add_env_states_to_trajectory_buffer(trajectory_buffer_data_group[k], v)
+            else:
+                # create if it doesn't exist
+                if k not in trajectory_buffer_data_group:
+                    trajectory_buffer_data_group.create_dataset(k, shape=(0,) + (self.num_envs,) + v.shape[2:], dtype=v.dtype, chunks=(1,) + (self.num_envs,) + v.shape[2:], overwrite=True)#, compressor=self.zarr_compressor)
+                trajectory_buffer_data_group[k].append(v)
+
     def reset(
         self,
         *args,
@@ -366,6 +505,7 @@ class RecordEpisodeZarr(gym.Wrapper):
                 self.flush_video()
             # if doing a full reset then we flush all trajectories including incompleted ones
             if self._trajectory_buffer is not None:
+            # if we store in memory and its not empty, then we need to write it to disk
                 if "env_idx" not in options:
                     self.flush_trajectory(env_idxs_to_flush=np.arange(self.num_envs))
                 else:
@@ -378,7 +518,9 @@ class RecordEpisodeZarr(gym.Wrapper):
             # if we reconfigure, there is the possibility that state dictionary looks different now
             # so trajectory buffer must be wiped
             self._trajectory_buffer = None
+
         if self.save_trajectory:
+            # adding the "batch" dimension as is done by common.batch is creating the temporal dimension such that each array is Txbx(data dims), where b is num envs
             state_dict = self.base_env.get_state_dict()
             action = common.batch(
                 self.env.get_wrapper_attr("single_action_space").sample()
@@ -391,67 +533,76 @@ class RecordEpisodeZarr(gym.Wrapper):
                         f"State dictionary is not consistent, disabling recording of environment states for {self.env}"
                     )
                     self._already_warned_about_state_dict_inconsistency = True
-            first_step = Step(
-                state=None,
-                observation=common.to_numpy(common.batch(obs)),
-                # note first reward/action etc. are ignored when saving trajectories to disk
-                action=common.to_numpy(common.batch(action.repeat(self.num_envs, 0))),
-                reward=np.zeros(
-                    (
-                        1,
-                        self.num_envs,
-                    ),
-                    dtype=float,
-                ),
-                # terminated and truncated are fixed to be True at the start to indicate the start of an episode.
-                # an episode is done when one of these is True otherwise the trajectory is incomplete / a partial episode
-                terminated=np.ones((1, self.num_envs), dtype=bool),
-                truncated=np.ones((1, self.num_envs), dtype=bool),
-                done=np.ones((1, self.num_envs), dtype=bool),
-                success=np.zeros((1, self.num_envs), dtype=bool),
-                fail=np.zeros((1, self.num_envs), dtype=bool),
-                env_episode_ptr=np.zeros((self.num_envs,), dtype=int),
-            )
+            # first_step = Step(
+            #     state=None,
+            #     observation=common.to_numpy(common.batch(obs)),
+            #     # note first reward/action etc. are ignored when saving trajectories to disk
+            #     action=common.to_numpy(common.batch(action.repeat(self.num_envs, 0))),
+            #     reward=np.zeros(
+            #         (
+            #             1,
+            #             self.num_envs,
+            #         ),
+            #         dtype=float,
+            #     ),
+            #     # terminated and truncated are fixed to be True at the start to indicate the start of an episode.
+            #     # an episode is done when one of these is True otherwise the trajectory is incomplete / a partial episode
+            #     terminated=np.ones((1, self.num_envs), dtype=bool),
+            #     truncated=np.ones((1, self.num_envs), dtype=bool),
+            #     done=np.ones((1, self.num_envs), dtype=bool),
+            #     success=np.zeros((1, self.num_envs), dtype=bool),
+            #     fail=np.zeros((1, self.num_envs), dtype=bool),
+            #     env_episode_ptr=np.zeros((self.num_envs,), dtype=int),
+            # )
+            # if self.record_env_state:
+                # first_step.state = common.to_numpy(common.batch(state_dict))
             if self.record_env_state:
-                first_step.state = common.to_numpy(common.batch(state_dict))
+                state_dict = common.to_numpy(common.batch(state_dict))
+            else:
+                state_dict = None
+            
             env_idx = np.arange(self.num_envs)
             if "env_idx" in options:
                 env_idx = common.to_numpy(options["env_idx"])
-            if self._trajectory_buffer is None:
+            if self._trajectory_buffer is None: # create and add to the trajectory buffer
                 # Initialize trajectory buffer on the first episode based on given observation (which should be generated after all wrappers)
-                self._trajectory_buffer = first_step
-            else:
+                # self._trajectory_buffer = first_step
+                self._trajectory_buffer = self.create_and_initialize_new_trajectory_buffer(common.to_numpy(common.batch(obs)), common.to_numpy(common.batch(action.repeat(self.num_envs, 0))), env_state_dict=state_dict)
+            
+            else: # add to the existing trajectory buffer
 
-                def recursive_replace(x, y):
-                    if isinstance(x, np.ndarray):
-                        x[-1, env_idx] = y[-1, env_idx]
-                    else:
-                        for k in x.keys():
-                            recursive_replace(x[k], y[k])
+                # def recursive_replace(x, y):
+                #     if isinstance(x, np.ndarray):
+                #         x[-1, env_idx] = y[-1, env_idx]
+                #     else:
+                #         for k in x.keys():
+                #             recursive_replace(x[k], y[k])
 
-                # TODO (stao): how do we store states from GPU sim of tasks with objects not in every sub-scene?
-                # Maybe we shouldn't?
-                if self.record_env_state:
-                    recursive_replace(self._trajectory_buffer.state, first_step.state)
-                recursive_replace(
-                    self._trajectory_buffer.observation, first_step.observation
-                )
-                recursive_replace(self._trajectory_buffer.action, first_step.action)
-                if self.record_reward:
-                    recursive_replace(self._trajectory_buffer.reward, first_step.reward)
-                recursive_replace(
-                    self._trajectory_buffer.terminated, first_step.terminated
-                )
-                recursive_replace(
-                    self._trajectory_buffer.truncated, first_step.truncated
-                )
-                recursive_replace(self._trajectory_buffer.done, first_step.done)
-                if self._trajectory_buffer.success is not None:
-                    recursive_replace(
-                        self._trajectory_buffer.success, first_step.success
-                    )
-                if self._trajectory_buffer.fail is not None:
-                    recursive_replace(self._trajectory_buffer.fail, first_step.fail)
+                # # TODO (stao): how do we store states from GPU sim of tasks with objects not in every sub-scene?
+                # # Maybe we shouldn't?
+                # if self.record_env_state:
+                #     recursive_replace(self._trajectory_buffer.state, first_step.state)
+                # recursive_replace(
+                #     self._trajectory_buffer.observation, first_step.observation
+                # )
+                # recursive_replace(self._trajectory_buffer.action, first_step.action)
+                # if self.record_reward:
+                #     recursive_replace(self._trajectory_buffer.reward, first_step.reward)
+                # recursive_replace(
+                #     self._trajectory_buffer.terminated, first_step.terminated
+                # )
+                # recursive_replace(
+                #     self._trajectory_buffer.truncated, first_step.truncated
+                # )
+                # recursive_replace(self._trajectory_buffer.done, first_step.done)
+                # if self._trajectory_buffer.success is not None:
+                #     recursive_replace(
+                #         self._trajectory_buffer.success, first_step.success
+                #     )
+                # if self._trajectory_buffer.fail is not None:
+                #     recursive_replace(self._trajectory_buffer.fail, first_step.fail)
+                self.add_to_existing_trajectory_buffer(self._trajectory_buffer, common.to_numpy(common.batch(obs)), common.to_numpy(common.batch(action)), env_state_dict=state_dict)
+
         if options is not None and "env_idx" in options:
             options["env_idx"] = common.to_numpy(options["env_idx"])
         self.last_reset_kwargs = copy.deepcopy(dict(options=options, **kwargs))
@@ -469,51 +620,71 @@ class RecordEpisodeZarr(gym.Wrapper):
         if self.save_trajectory:
             state_dict = self.base_env.get_state_dict()
             if self.record_env_state:
-                self._trajectory_buffer.state = common.append_dict_array(
-                    self._trajectory_buffer.state,
-                    common.to_numpy(common.batch(state_dict)),
-                )
-            self._trajectory_buffer.observation = common.append_dict_array(
-                self._trajectory_buffer.observation,
-                common.to_numpy(common.batch(obs)),
-            )
+                # self._trajectory_buffer.state = common.append_dict_array(
+                #     self._trajectory_buffer.state,
+                #     common.to_numpy(common.batch(state_dict)),
+                # )
+                state_dict = common.to_numpy(common.batch(state_dict))
+            else:
+                state_dict = None
+            # self._trajectory_buffer.observation = common.append_dict_array(
+            #     self._trajectory_buffer.observation,
+            #     common.to_numpy(common.batch(obs)),
+            # )
 
-            self._trajectory_buffer.action = common.append_dict_array(
-                self._trajectory_buffer.action,
-                common.to_numpy(common.batch(action)),
-            )
+            # self._trajectory_buffer.action = common.append_dict_array(
+            #     self._trajectory_buffer.action,
+            #     common.to_numpy(common.batch(action)),
+            # )
             if self.record_reward:
-                self._trajectory_buffer.reward = common.append_dict_array(
-                    self._trajectory_buffer.reward,
-                    common.to_numpy(common.batch(rew)),
-                )
-            self._trajectory_buffer.terminated = common.append_dict_array(
-                self._trajectory_buffer.terminated,
-                common.to_numpy(common.batch(terminated)),
-            )
-            self._trajectory_buffer.truncated = common.append_dict_array(
-                self._trajectory_buffer.truncated,
-                common.to_numpy(common.batch(truncated)),
-            )
+            #     self._trajectory_buffer.reward = common.append_dict_array(
+            #         self._trajectory_buffer.reward,
+            #         common.to_numpy(common.batch(rew)),
+            #     )
+                rew = common.to_numpy(common.batch(rew))
+            else:
+                rew = None
+            # self._trajectory_buffer.terminated = common.append_dict_array(
+            #     self._trajectory_buffer.terminated,
+            #     common.to_numpy(common.batch(terminated)),
+            # )
+            # self._trajectory_buffer.truncated = common.append_dict_array(
+            #     self._trajectory_buffer.truncated,
+            #     common.to_numpy(common.batch(truncated)),
+            # )
             done = terminated | truncated
-            self._trajectory_buffer.done = common.append_dict_array(
-                self._trajectory_buffer.done,
-                common.to_numpy(common.batch(done)),
-            )
+            done = common.to_numpy(common.batch(done))
+            # self._trajectory_buffer.done = common.append_dict_array(
+            #     self._trajectory_buffer.done,
+            #     common.to_numpy(common.batch(done)),
+            # )
             if "success" in info:
-                self._trajectory_buffer.success = common.append_dict_array(
-                    self._trajectory_buffer.success,
-                    common.to_numpy(common.batch(info["success"])),
-                )
+                # self._trajectory_buffer.success = common.append_dict_array(
+                #     self._trajectory_buffer.success,
+                #     common.to_numpy(common.batch(info["success"])),
+                # )
+                success = common.to_numpy(common.batch(info["success"]))
             else:
-                self._trajectory_buffer.success = None
+                # self._trajectory_buffer.success = None
+                if 'success' in self._trajectory_buffer["data"]:
+                    del self._trajectory_buffer["data"]['success']
+                success = None
+
             if "fail" in info:
-                self._trajectory_buffer.fail = common.append_dict_array(
-                    self._trajectory_buffer.fail,
-                    common.to_numpy(common.batch(info["fail"])),
-                )
+                # self._trajectory_buffer.fail = common.append_dict_array(
+                #     self._trajectory_buffer.fail,
+                #     common.to_numpy(common.batch(info["fail"])),
+                # )
+                fail = common.to_numpy(common.batch(info["fail"]))
             else:
-                self._trajectory_buffer.fail = None
+                # self._trajectory_buffer.fail = None
+                if 'fail' in self._trajectory_buffer["data"]:
+                    del self._trajectory_buffer["data"]['fail']
+                fail=None
+
+            self.add_to_existing_trajectory_buffer(self._trajectory_buffer, common.to_numpy(common.batch(obs)), common.to_numpy(common.batch(common.batch(action))), reward=rew,
+                                                   terminated=common.to_numpy(common.batch(terminated)), truncated=common.to_numpy(common.batch(truncated)), done=done, 
+                                                   success=success, fail=fail, env_state_dict=state_dict)
 
         if self.save_video:
             self._video_steps += 1
@@ -561,82 +732,105 @@ class RecordEpisodeZarr(gym.Wrapper):
         if env_idxs_to_flush is None:
             env_idxs_to_flush = np.arange(0, self.num_envs)
         for env_idx in env_idxs_to_flush:
-            start_ptr = self._trajectory_buffer.env_episode_ptr[env_idx]
-            end_ptr = len(self._trajectory_buffer.done)
+            # start_ptr = self._trajectory_buffer.env_episode_ptr[env_idx]
+            start_ptr = self._trajectory_buffer.meta['env_episode_ptr'][env_idx]
+            # end_ptr = len(self._trajectory_buffer.done)
+            end_ptr = len(self._trajectory_buffer.meta['done'])
             if ignore_empty_transition and end_ptr - start_ptr <= 1:
                 continue
             flush_count += 1
             if save:
                 self._episode_id += 1
                 traj_id = "traj_{}".format(self._episode_id)
-                group = self._h5_file.create_group(traj_id, track_order=True)
+                # group = self._h5_file.create_group(traj_id, track_order=True)
+                if 'ep_ids' not in self.meta_group:
+                    self.meta_group.create_dataset('ep_ids', shape=(0,), dtype='S256', chunks=(1,), overwrite=True)
+                self.meta_group['ep_ids'].append(np.array([traj_id], dtype='S256'))
 
-                def recursive_add_to_h5py(
-                    group: h5py.Group, data: Union[dict, Array], key
+                # def recursive_add_to_h5py(
+                #     group: h5py.Group, data: Union[dict, Array], key
+                # ):
+                #     """simple recursive data insertion for nested data structures into h5py, optimizing for visual data as well"""
+                #     if isinstance(data, dict):
+                #         subgrp = group.create_group(key, track_order=True)
+                #         for k in data.keys():
+                #             recursive_add_to_h5py(subgrp, data[k], k)
+                #     else:
+                #         if key == "rgb":
+                #             # NOTE(jigu): It is more efficient to use gzip than png for a sequence of images.
+                #             group.create_dataset(
+                #                 "rgb",
+                #                 data=data[start_ptr:end_ptr, env_idx],
+                #                 dtype=data.dtype,
+                #                 compression="gzip",
+                #                 compression_opts=5,
+                #             )
+                #         elif key == "depth":
+                #             # NOTE (stao): By default now cameras in ManiSkill return depth values of type uint16 for numpy
+                #             group.create_dataset(
+                #                 key,
+                #                 data=data[start_ptr:end_ptr, env_idx],
+                #                 dtype=data.dtype,
+                #                 compression="gzip",
+                #                 compression_opts=5,
+                #             )
+                #         elif key == "seg":
+                #             group.create_dataset(
+                #                 key,
+                #                 data=data[start_ptr:end_ptr, env_idx],
+                #                 dtype=data.dtype,
+                #                 compression="gzip",
+                #                 compression_opts=5,
+                #             )
+                #         else:
+                #             group.create_dataset(
+                #                 key,
+                #                 data=data[start_ptr:end_ptr, env_idx],
+                #                 dtype=data.dtype,
+                #             )
+
+                def recursive_copy_memory_store_to_disk(
+                        data: Union[zarr.hierarchy.Group, zarr.core.Array], 
+                        disk_group: zarr.hierarchy.Group, 
+                        key: str,
+                        env_idx: int,
                 ):
-                    """simple recursive data insertion for nested data structures into h5py, optimizing for visual data as well"""
-                    if isinstance(data, dict):
-                        subgrp = group.create_group(key, track_order=True)
+                    if isinstance(data, zarr.hierarchy.Group):
+                        if key not in disk_group:
+                            disk_group.create_group(key)
                         for k in data.keys():
-                            recursive_add_to_h5py(subgrp, data[k], k)
+                            recursive_copy_memory_store_to_disk(data[k], disk_group[key], k, env_idx)
+                    elif isinstance(data, zarr.core.Array):
+                        if key not in disk_group:
+                            disk_group.create_dataset(key, shape=(0,) + data.shape[2:], dtype=data.dtype, chunks=(1,) + data.shape[2:], overwrite=True, compressor=self.zarr_compressor)
+                        disk_group[key].append(data[start_ptr:end_ptr, env_idx])
                     else:
-                        if key == "rgb":
-                            # NOTE(jigu): It is more efficient to use gzip than png for a sequence of images.
-                            group.create_dataset(
-                                "rgb",
-                                data=data[start_ptr:end_ptr, env_idx],
-                                dtype=data.dtype,
-                                compression="gzip",
-                                compression_opts=5,
-                            )
-                        elif key == "depth":
-                            # NOTE (stao): By default now cameras in ManiSkill return depth values of type uint16 for numpy
-                            group.create_dataset(
-                                key,
-                                data=data[start_ptr:end_ptr, env_idx],
-                                dtype=data.dtype,
-                                compression="gzip",
-                                compression_opts=5,
-                            )
-                        elif key == "seg":
-                            group.create_dataset(
-                                key,
-                                data=data[start_ptr:end_ptr, env_idx],
-                                dtype=data.dtype,
-                                compression="gzip",
-                                compression_opts=5,
-                            )
-                        else:
-                            group.create_dataset(
-                                key,
-                                data=data[start_ptr:end_ptr, env_idx],
-                                dtype=data.dtype,
-                            )
+                        raise ValueError(f"Data type {type(data)} not supported for recursive_copy_memory_store_to_disk")
 
-                # Observations need special processing
-                if isinstance(self._trajectory_buffer.observation, dict):
-                    recursive_add_to_h5py(
-                        group, self._trajectory_buffer.observation, "obs"
-                    )
-                elif isinstance(self._trajectory_buffer.observation, np.ndarray):
-                    if self.cpu_wrapped_env:
-                        group.create_dataset(
-                            "obs",
-                            data=self._trajectory_buffer.observation[start_ptr:end_ptr],
-                            dtype=self._trajectory_buffer.observation.dtype,
-                        )
-                    else:
-                        group.create_dataset(
-                            "obs",
-                            data=self._trajectory_buffer.observation[
-                                start_ptr:end_ptr, env_idx
-                            ],
-                            dtype=self._trajectory_buffer.observation.dtype,
-                        )
-                else:
-                    raise NotImplementedError(
-                        f"RecordEpisode wrapper does not know how to handle observation data of type {type(self._trajectory_buffer.observation)}"
-                    )
+                # # Observations need special processing
+                # if isinstance(self._trajectory_buffer.observation, dict):
+                #     recursive_add_to_h5py(
+                #         group, self._trajectory_buffer.observation, "obs"
+                #     )
+                # elif isinstance(self._trajectory_buffer.observation, np.ndarray):
+                #     if self.cpu_wrapped_env:
+                #         group.create_dataset(
+                #             "obs",
+                #             data=self._trajectory_buffer.observation[start_ptr:end_ptr],
+                #             dtype=self._trajectory_buffer.observation.dtype,
+                #         )
+                #     else:
+                #         group.create_dataset(
+                #             "obs",
+                #             data=self._trajectory_buffer.observation[
+                #                 start_ptr:end_ptr, env_idx
+                #             ],
+                #             dtype=self._trajectory_buffer.observation.dtype,
+                #         )
+                # else:
+                #     raise NotImplementedError(
+                #         f"RecordEpisode wrapper does not know how to handle observation data of type {type(self._trajectory_buffer.observation)}"
+                #     )
                 episode_info = dict(
                     episode_id=self._episode_id,
                     episode_seed=self.base_env._episode_seed[env_idx],
@@ -650,57 +844,90 @@ class RecordEpisodeZarr(gym.Wrapper):
                     episode_info.update(reset_kwargs=dict())
 
                 # slice some data to remove the first dummy frame.
-                actions = common.index_dict_array(
-                    self._trajectory_buffer.action,
-                    (slice(start_ptr + 1, end_ptr), env_idx),
-                )
-                terminated = self._trajectory_buffer.terminated[
-                    start_ptr + 1 : end_ptr, env_idx
-                ]
-                truncated = self._trajectory_buffer.truncated[
-                    start_ptr + 1 : end_ptr, env_idx
-                ]
-                if isinstance(self._trajectory_buffer.action, dict):
-                    recursive_add_to_h5py(group, actions, "actions")
-                else:
-                    group.create_dataset("actions", data=actions, dtype=np.float32)
-                group.create_dataset("terminated", data=terminated, dtype=bool)
-                group.create_dataset("truncated", data=truncated, dtype=bool)
+                # actions = common.index_dict_array(
+                #     self._trajectory_buffer.action,
+                #     (slice(start_ptr + 1, end_ptr), env_idx),
+                # )
 
-                if self._trajectory_buffer.success is not None:
-                    group.create_dataset(
-                        "success",
-                        data=self._trajectory_buffer.success[
-                            start_ptr + 1 : end_ptr, env_idx
-                        ],
-                        dtype=bool,
-                    )
+                self._trajectory_buffer.data['action'] = self._trajectory_buffer.data['action'][start_ptr + 1 : end_ptr]
+                # terminated = self._trajectory_buffer.terminated[
+                #     start_ptr + 1 : end_ptr, env_idx
+                # ]
+                self._trajectory_buffer.data['terminated'] = self._trajectory_buffer.data['terminated'][start_ptr + 1 : end_ptr]
+                # truncated = self._trajectory_buffer.truncated[
+                #     start_ptr + 1 : end_ptr, env_idx
+                # ]
+                self._trajectory_buffer.data['truncated'] = self._trajectory_buffer.data['truncated'][start_ptr + 1 : end_ptr]
+                # if isinstance(self._trajectory_buffer.action, dict):
+                #     recursive_add_to_h5py(group, actions, "actions")
+                # else:
+                #     group.create_dataset("actions", data=actions, dtype=np.float32)
+                # group.create_dataset("terminated", data=terminated, dtype=bool)
+                # group.create_dataset("truncated", data=truncated, dtype=bool)
+
+                # if self._trajectory_buffer.success is not None:
+                #     group.create_dataset(
+                #         "success",
+                #         data=self._trajectory_buffer.success[
+                #             start_ptr + 1 : end_ptr, env_idx
+                #         ],
+                #         dtype=bool,
+                #     )
+                #     episode_info.update(
+                #         success=self._trajectory_buffer.success[end_ptr - 1, env_idx]
+                #     )
+                if 'success' in self._trajectory_buffer.data:
+                    self._trajectory_buffer.data['success'] = self._trajectory_buffer.data['success'][start_ptr + 1 : end_ptr]
                     episode_info.update(
-                        success=self._trajectory_buffer.success[end_ptr - 1, env_idx]
+                        success=self._trajectory_buffer.data['success'][end_ptr - 1]
                     )
-                if self._trajectory_buffer.fail is not None:
-                    group.create_dataset(
-                        "fail",
-                        data=self._trajectory_buffer.fail[
-                            start_ptr + 1 : end_ptr, env_idx
-                        ],
-                        dtype=bool,
-                    )
+                # if self._trajectory_buffer.fail is not None:
+                #     group.create_dataset(
+                #         "fail",
+                #         data=self._trajectory_buffer.fail[
+                #             start_ptr + 1 : end_ptr, env_idx
+                #         ],
+                #         dtype=bool,
+                #     )
+                #     episode_info.update(
+                #         fail=self._trajectory_buffer.fail[end_ptr - 1, env_idx]
+                #     )
+                if 'fail' in self._trajectory_buffer.data:
+                    self._trajectory_buffer.data['fail'] = self._trajectory_buffer.data['fail'][start_ptr + 1 : end_ptr]
                     episode_info.update(
-                        fail=self._trajectory_buffer.fail[end_ptr - 1, env_idx]
+                        fail=self._trajectory_buffer.data['fail'][end_ptr - 1, env_idx]
                     )
-                if self.record_env_state:
-                    recursive_add_to_h5py(
-                        group, self._trajectory_buffer.state, "env_states"
-                    )
-                if self.record_reward:
-                    group.create_dataset(
-                        "rewards",
-                        data=self._trajectory_buffer.reward[
-                            start_ptr + 1 : end_ptr, env_idx
-                        ],
-                        dtype=np.float32,
-                    )
+                # if self.record_env_state:
+                #     recursive_add_to_h5py(
+                #         group, self._trajectory_buffer.state, "env_states"
+                #     )
+                # if self.record_reward:
+                #     group.create_dataset(
+                #         "rewards",
+                #         data=self._trajectory_buffer.reward[
+                #             start_ptr + 1 : end_ptr, env_idx
+                #         ],
+                #         dtype=np.float32,
+                #     )
+                if self.record_reward and 'reward' in self._trajectory_buffer.data:
+                    self._trajectory_buffer.data['reward'] = self._trajectory_buffer.data['reward'][start_ptr + 1 : end_ptr]
+
+                # should trim the final observation/state as there is no corresponding action that follows from it.
+                # get all keys that start with observation.
+                observation_keys = [k for k in self._trajectory_buffer.data.keys() if k.startswith('observation.')]
+                for k in observation_keys:
+                    self._trajectory_buffer.data[k] = self._trajectory_buffer.data[k][start_ptr:end_ptr-1]
+
+                recursive_copy_memory_store_to_disk(self._trajectory_buffer["data"], self.zarr_root, 'data', env_idx)
+
+                if 'episode_ends' not in self.meta_group:
+                    self.meta_group.create_dataset('episode_ends', shape=(0,), dtype=np.int32, chunks=(1,), overwrite=True)
+                prev_episode_end = 0
+                if len(self.meta_group['episode_ends']) > 0:
+                    prev_episode_end = self.meta_group['episode_ends'][-1]
+                self.meta_group['episode_ends'].append(np.array([end_ptr - start_ptr - 1 + prev_episode_end], dtype=np.int32))
+
+                # NOTE: done and env states are not trimmed
 
                 self._json_data["episodes"].append(common.to_numpy(episode_info))
                 dump_json(self._json_path, self._json_data, indent=2)
@@ -714,44 +941,65 @@ class RecordEpisodeZarr(gym.Wrapper):
 
         # truncate self._trajectory_buffer down to save memory
         if flush_count > 0:
-            self._trajectory_buffer.env_episode_ptr[env_idxs_to_flush] = (
-                len(self._trajectory_buffer.done) - 1
-            )
-            min_env_ptr = self._trajectory_buffer.env_episode_ptr.min()
-            N = len(self._trajectory_buffer.done)
+            # TODO: go back and double check logic. 
+            # I'm being lazy by just setting trajectory buffer back to None so that next reset step doesn't try to write a partial episode with the remnants of the previous episode (done and env states should have one remaining element as they are never trimmed)
+            
+            # # self._trajectory_buffer.env_episode_ptr[env_idxs_to_flush] = (
+            # #     len(self._trajectory_buffer.done) - 1
+            # # )
+            # self._trajectory_buffer.meta['env_episode_ptr'][env_idxs_to_flush] = len(self._trajectory_buffer.meta.done) - 1
+            # # min_env_ptr = self._trajectory_buffer.env_episode_ptr.min()
+            # min_env_ptr = np.min(self._trajectory_buffer.meta['env_episode_ptr'])
+            # # N = len(self._trajectory_buffer.done)
+            # N = len(self._trajectory_buffer.meta.done)
 
-            if self.record_env_state:
-                self._trajectory_buffer.state = common.index_dict_array(
-                    self._trajectory_buffer.state, slice(min_env_ptr, N)
-                )
-            self._trajectory_buffer.observation = common.index_dict_array(
-                self._trajectory_buffer.observation, slice(min_env_ptr, N)
-            )
-            self._trajectory_buffer.action = common.index_dict_array(
-                self._trajectory_buffer.action, slice(min_env_ptr, N)
-            )
-            if self.record_reward:
-                self._trajectory_buffer.reward = common.index_dict_array(
-                    self._trajectory_buffer.reward, slice(min_env_ptr, N)
-                )
-            self._trajectory_buffer.terminated = common.index_dict_array(
-                self._trajectory_buffer.terminated, slice(min_env_ptr, N)
-            )
-            self._trajectory_buffer.truncated = common.index_dict_array(
-                self._trajectory_buffer.truncated, slice(min_env_ptr, N)
-            )
-            self._trajectory_buffer.done = common.index_dict_array(
-                self._trajectory_buffer.done, slice(min_env_ptr, N)
-            )
-            if self._trajectory_buffer.success is not None:
-                self._trajectory_buffer.success = common.index_dict_array(
-                    self._trajectory_buffer.success, slice(min_env_ptr, N)
-                )
-            if self._trajectory_buffer.fail is not None:
-                self._trajectory_buffer.fail = common.index_dict_array(
-                    self._trajectory_buffer.fail, slice(min_env_ptr, N)
-                )
-            self._trajectory_buffer.env_episode_ptr -= min_env_ptr
+            # # if self.record_env_state:
+            # #     self._trajectory_buffer.state = common.index_dict_array(
+            # #         self._trajectory_buffer.state, slice(min_env_ptr, N)
+            # #     )
+            # # self._trajectory_buffer.observation = common.index_dict_array(
+            # #     self._trajectory_buffer.observation, slice(min_env_ptr, N)
+            # # )
+            # # self._trajectory_buffer.action = common.index_dict_array(
+            # #     self._trajectory_buffer.action, slice(min_env_ptr, N)
+            # # )
+            # # if self.record_reward:
+            # #     self._trajectory_buffer.reward = common.index_dict_array(
+            # #         self._trajectory_buffer.reward, slice(min_env_ptr, N)
+            # #     )
+            # # self._trajectory_buffer.terminated = common.index_dict_array(
+            # #     self._trajectory_buffer.terminated, slice(min_env_ptr, N)
+            # # )
+            # # self._trajectory_buffer.truncated = common.index_dict_array(
+            # #     self._trajectory_buffer.truncated, slice(min_env_ptr, N)
+            # # )
+            # # self._trajectory_buffer.done = common.index_dict_array(
+            # #     self._trajectory_buffer.done, slice(min_env_ptr, N)
+            # # )
+            # # if self._trajectory_buffer.success is not None:
+            # #     self._trajectory_buffer.success = common.index_dict_array(
+            # #         self._trajectory_buffer.success, slice(min_env_ptr, N)
+            # #     )
+            # # if self._trajectory_buffer.fail is not None:
+            # #     self._trajectory_buffer.fail = common.index_dict_array(
+            # #         self._trajectory_buffer.fail, slice(min_env_ptr, N)
+            # #     )
+            # def recursive_flush_trajectory_buffer(
+            #         trajectory_data_group: zarr.hierarchy.Group, 
+            #         min_env_ptr: int,
+            #         N: int
+            # ):
+            #     for k, v in trajectory_data_group.items():
+            #         if isinstance(v, zarr.hierarchy.Group):
+            #             recursive_flush_trajectory_buffer(v, min_env_ptr, N)
+            #         else:
+            #             trajectory_data_group[k] = v[min_env_ptr:N]
+
+            # recursive_flush_trajectory_buffer(self._trajectory_buffer["data"], min_env_ptr, N)
+            # # self._trajectory_buffer.env_episode_ptr -= min_env_ptr
+            # self._trajectory_buffer.meta['env_episode_ptr'] -= min_env_ptr
+
+            self._trajectory_buffer = None
 
     def flush_video(
         self,
@@ -815,9 +1063,10 @@ class RecordEpisodeZarr(gym.Wrapper):
                     env_idxs_to_flush=np.arange(self.num_envs),
                 )
             if self.clean_on_close:
+                # TODO: implement clean_trajectories for zarr
                 clean_trajectories(self._h5_file, self._json_data)
                 dump_json(self._json_path, self._json_data, indent=2)
-            self._h5_file.close()
+            # self._h5_file.close()
         if self.save_video:
             if self.save_on_reset:
                 self.flush_video()

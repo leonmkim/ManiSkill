@@ -713,6 +713,7 @@ class RecordEpisode(gym.Wrapper):
                         )
 
         # truncate self._trajectory_buffer down to save memory
+        # LEON: This really just emptys the buffer thats been written to disk
         if flush_count > 0:
             self._trajectory_buffer.env_episode_ptr[env_idxs_to_flush] = (
                 len(self._trajectory_buffer.done) - 1
