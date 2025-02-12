@@ -197,7 +197,7 @@ class BookInsertionEnv(BaseEnv):
 
             grasped_book_lengths = self._batched_episode_rng.uniform(0.1, 0.15)
             grasped_book_widths = self._batched_episode_rng.uniform(0.03, 0.065) # max gripper width is .08
-            grasped_book_heights = self._batched_episode_rng.uniform(0.15, 0.25)
+            grasped_book_heights = self._batched_episode_rng.uniform(0.165, 0.25)
             grasped_book_densities = self._batched_episode_rng.uniform(650, 850)
             grasped_book_colors = np.ones((self.num_envs, 4))
             grasped_book_colors[:,0] = self._batched_episode_rng.uniform(0.0, 1.0)
