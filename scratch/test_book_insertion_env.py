@@ -153,7 +153,7 @@ if record_demonstrations:
         source_type="teleoperation",
         source_desc="teleoperation via spacemouse",
     )
-seed = 0
+seed = 31
 num_trajs = 0
 #%%
 sim_dt = 1.0 / env.sim_config.sim_freq

@@ -91,7 +91,7 @@ class BookInsertionEnv(BaseEnv):
 
     cam_resize_factor: float = 0.5
 
-    max_extrinsic_contacts: int = 100 # for padding
+    max_extrinsic_contacts: int = 50 # for padding
 
     def __init__(
         self,

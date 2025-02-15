@@ -14,12 +14,12 @@ import cv2
 # demo = h5py.File(path_to_demo, 'r')
 # # %%
 # traj = demo['traj_0']
-path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250212_130205.zarr')
+path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250214_072559.zarr')
 demo = zarr.open(path_to_demo, 'r')
 dataset_name = path_to_demo.stem
 
 #%%
-episode_idx = 4
+episode_idx = 0
 episode_name = f"traj_{episode_idx}"
 output_dir = path_to_demo.parent / dataset_name / episode_name
 
@@ -32,6 +32,14 @@ episode_end = demo.meta.episode_ends[episode_idx]
 rgb_images_for_episode = demo.data['observation.rgb'][episode_start:episode_end]
 depth_images_for_episode = demo.data['observation.depth'][episode_start:episode_end]
 contact_images_for_episode = demo.data['observation.contact_map'][episode_start:episode_end]
+grasped_object_masks_for_episode = demo.data['observation.EE_obj_mask'][episode_start:episode_end]*255
+#%%
+images_to_video(
+    images=grasped_object_masks_for_episode,
+    output_dir=str(output_dir),
+    video_name='grasped_obj_mask_video',
+    fps=20,
+)
 #%%
 images_to_video(
     images=rgb_images_for_episode,
@@ -65,10 +73,13 @@ images_to_video(
     fps=20,
 )
 #%%
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as pltK
 plt.imshow(contact_bool_mask.astype(np.uint8)*255)
 # %%
 path_to_zarr = Path('~/fish_leon/FISH/expert_demos/frankagym/FrankaInsertion-v1/120_240x320_all_twodim_left_to_right_annotated_start_idx_5hz_zstd7_EE_pxl_coords_expert_demos_imp_act/demos.zarr')
 path_to_zarr = path_to_zarr.expanduser()
 zarr_dataset = zarr.open(path_to_zarr, 'r')
+# %%
+plt.imshow(zarr_dataset.data['observation.EE_obj_mask'][0])
+
 # %%

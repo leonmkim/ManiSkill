@@ -124,7 +124,6 @@ def clean_trajectories(
 
     json_dict["episodes"] = new_json_episodes
 
-
 @dataclass
 class Step:
     state: np.ndarray
@@ -415,6 +414,9 @@ class RecordEpisodeZarr(gym.Wrapper):
         data_group.create_dataset('observation.segmentation', shape=(0,) + (self.num_envs,) + image_obs_shape + (1,), dtype=np.uint16, chunks=(1,) + (self.num_envs,) + image_obs_shape + (1,), overwrite=True)#, compressor=self.zarr_compressor)
         data_group.create_dataset('observation.contact_map', shape=(0,) + (self.num_envs,) + image_obs_shape + (1,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + image_obs_shape + (1,), overwrite=True)#, compressor=self.zarr_compressor)
         
+        contact_positions_shape = obs['extra']['extrinsic_contact_positions'].shape[2:]
+        data_group.create_dataset('observation.contact_positions', shape=(0,) + (self.num_envs,) + contact_positions_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + contact_positions_shape, overwrite=True)#, compressor=self.zarr_compressor)
+        
         current_pose_shape = obs['extra']['end_effector_pose'].shape[2:]
         state_shape = list(current_pose_shape)
         state_shape[0] += 1 # for gripper width
@@ -467,6 +469,7 @@ class RecordEpisodeZarr(gym.Wrapper):
         trajectory_buffer_data_group['observation.depth'].append(obs['sensor_data']['base_camera']['depth'])
         trajectory_buffer_data_group['observation.segmentation'].append(obs['sensor_data']['base_camera']['segmentation'])
         trajectory_buffer_data_group['observation.contact_map'].append(obs['extra']['extrinsic_contact_map'])
+        trajectory_buffer_data_group['observation.contact_positions'].append(obs['extra']['extrinsic_contact_positions'])
 
         current_pose = obs['extra']['end_effector_pose']
         gripper_width = np.sum(obs['agent']['qpos'][:,:,-2:], axis=-1, keepdims=True)
@@ -741,6 +744,22 @@ class RecordEpisodeZarr(gym.Wrapper):
                 self.flush_video()
         self._elapsed_record_steps += 1
         return obs, rew, terminated, truncated, info
+    
+    def move_zarr_array_to_new_group(self, old_group: zarr.hierarchy.Group, new_group: zarr.hierarchy.Group, key):
+        new_group.create_dataset(key, data=old_group[key][:], shape=old_group[key].shape, dtype=old_group[key].dtype, chunks=old_group[key].chunks, overwrite=True)
+        del old_group[key]
+
+    def extract_individual_segmentation_masks(
+            self, trajectory_data_buffer, segmentation_id_map,
+    ):
+        assert 'observation.segmentation' in trajectory_data_buffer, "Segmentation masks not found in trajectory data buffer"
+        image_shape = trajectory_data_buffer['observation.segmentation'].shape[2:]
+        
+        if 'observation.EE_obj_mask' not in trajectory_data_buffer:
+            trajectory_data_buffer.create_dataset('observation.EE_obj_mask', shape=(0,) + (self.num_envs,) + image_shape, dtype=np.uint8, chunks=(1,) + (self.num_envs,) + image_shape, overwrite=True)#, compressor=self.zarr_compressor)
+
+        EE_obj_mask = (trajectory_data_buffer['observation.segmentation'][:] == segmentation_id_map[f"{self.env.grasped_book.name}_0"]).astype(np.uint8)
+        trajectory_data_buffer['observation.EE_obj_mask'].append(EE_obj_mask)
 
     def flush_trajectory(
         self,
@@ -955,6 +974,20 @@ class RecordEpisodeZarr(gym.Wrapper):
                 observation_keys = [k for k in self._trajectory_buffer.data.keys() if k.startswith('observation.')]
                 for k in observation_keys:
                     self._trajectory_buffer.data[k] = self._trajectory_buffer.data[k][start_ptr:end_ptr-1]
+
+                # move contact features to new 'gt_contact' group
+                if 'gt_contact' not in self._trajectory_buffer.data:
+                    self._trajectory_buffer.data.create_group('gt_contact')
+                self.move_zarr_array_to_new_group(self._trajectory_buffer.data, self._trajectory_buffer.data['gt_contact'], 'observation.contact_map')
+                self.move_zarr_array_to_new_group(self._trajectory_buffer.data, self._trajectory_buffer.data['gt_contact'], 'observation.contact_positions')
+
+                # move segmentation masks to new 'gt_segmentation' group
+                if 'gt_segmentation' not in self._trajectory_buffer.data:
+                    self._trajectory_buffer.data.create_group('gt_segmentation')
+                self.move_zarr_array_to_new_group(self._trajectory_buffer.data, self._trajectory_buffer.data['gt_segmentation'], 'observation.segmentation')
+
+                # post-process segmentation mask
+                self.extract_individual_segmentation_masks(self._trajectory_buffer.data.gt_segmentation, segmentation_id_map)
 
                 recursive_copy_memory_store_to_disk(self._trajectory_buffer["data"], self.zarr_root, 'data', env_idx)
 
