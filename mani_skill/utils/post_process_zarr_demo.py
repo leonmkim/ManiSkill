@@ -13,6 +13,7 @@ import shutil
 
 from mani_skill.utils.visualization.misc import images_to_video, tile_images
 
+#%%
 def recursive_append_new_demo_data(base_demo, new_demo):
     for key in base_demo.keys():
         if isinstance(base_demo[key], zarr.core.Array):
@@ -178,16 +179,45 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
 # path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250214_072559.zarr')
 # path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250214_083920.zarr')
 
-path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250215_123238.zarr')
+# path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250215_123238.zarr')
 # path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250215_142312.zarr')
 
-demo = zarr.open(path_to_demo, 'rw+')
+# path_to_demo = Path('~/fish_leon/FISH/expert_demos/frankagym/FrankaInsertion-v1/120_240x320_all_twodim_left_to_right_annotated_start_idx_5hz_zstd7_EE_pxl_coords_expert_demos_imp_act/demos.zarr')
+path_to_demo = Path('~/fish_leon/FISH/expert_demos/frankagym/FrankaInsertion-v1/test_sim_small_demos_20hz_act/demos.zarr')
 
+path_to_demo = path_to_demo.expanduser()
+demo = zarr.open(path_to_demo, 'rw+')
+#%%
 path_to_json = path_to_demo.with_suffix('.json')
 with open(path_to_json, 'r') as f:
     meta_json = json.load(f)
 num_episodes = len(demo.meta.episode_ends)
 assert num_episodes == len(meta_json['episodes'])
+#%%
+# add some needed meta attrs
+max_demo_length = 0
+for episode_dict in meta_json['episodes']:
+    episode_length = episode_dict['elapsed_steps']
+    if episode_length > max_demo_length:
+        max_demo_length = episode_length
+#%%
+meta_json['max_demo_length'] = max_demo_length
+demo.meta.attrs['max_demo_length'] = max_demo_length
+#%%
+# update the json file
+with open(path_to_json, 'w') as f:
+    json.dump(meta_json, f, indent=4)
+#%%
+# traverse the tree and print any attrs of groups or arrays
+def traverse_tree(node, indent=0):
+    if isinstance(node, zarr.hierarchy.Group):
+        print(f"{' '*indent}{node.name} with attrs: {list(node.attrs.items())}")
+        for key in node.keys():
+            traverse_tree(node[key], indent+2)
+    elif isinstance(node, zarr.core.Array):
+        print(f"{' '*indent}{node.name} with attrs: {list(node.attrs.items())}")
+
+traverse_tree(demo)
 
 #%%
 trim_start_and_end_of_trajectories(demo, meta_json, total_action_norm_threshold=.005)
@@ -201,6 +231,27 @@ demos_to_add_to_base_paths = [
     Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250215_142312.zarr'),
 ]
 merge_demos_into_base_demo(base_demo_path, demos_to_add_to_base_paths)
+#%%
+#%%
+# move the zarr and json file to a directory
+dataset_name = 'test_sim_small_demos'
+# dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
+dataset_root_dir = base_demo_path.parent
+new_dataset_dir = dataset_root_dir / dataset_name
+new_dataset_dir.mkdir(parents=True, exist_ok=True)
+#%%
+shutil.move(base_demo_path, new_dataset_dir)
+shutil.move(base_demo_path.with_suffix('.json'), new_dataset_dir)
+#%%
+# rename the zarr to demos.zarr
+new_demo_path = new_dataset_dir / base_demo_path.name
+new_demo_path.rename(new_dataset_dir / 'demos.zarr')
+#%%
+# rename the json file to demos.json
+new_json_path = new_dataset_dir / base_demo_path.with_suffix('.json').name
+new_json_path.rename(new_dataset_dir / 'demos.json')
+
+#%%
 
 #%%
 # create a tmp dataset for the trimmed trajectory
