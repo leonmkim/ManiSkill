@@ -72,10 +72,14 @@ def trim_start_and_end_of_trajectories(demo: zarr.hierarchy.Group, meta_json: di
 
         actions_for_episode = demo.data['action'][episode_start:episode_end]
         action_total_norms = np.linalg.norm(actions_for_episode[:,0:6], axis=1, ord=2)
-        new_episode_start = np.argwhere(action_total_norms > total_action_norm_threshold)[0][0] - 1 + episode_start
+        threshold_condition_idx = np.argwhere(action_total_norms > total_action_norm_threshold)
+        assert len(threshold_condition_idx) > 0
+        new_episode_start = threshold_condition_idx[0][0] - 1 + episode_start
 
         gripper_actions = actions_for_episode[:,6]
-        new_episode_end = np.argwhere(gripper_actions > -1)[0][0] + episode_start
+        threshold_condition_idx = np.argwhere(gripper_actions > -1)
+        assert len(threshold_condition_idx) > 0
+        new_episode_end = threshold_condition_idx[0][0] + episode_start
 
         assert new_episode_start < new_episode_end
         new_episode_length = new_episode_end - new_episode_start
@@ -174,7 +178,16 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
         shutil.rmtree(new_demo_path)
 
         new_meta_json_path.unlink()
+# # traverse the tree and print any attrs of groups or arrays
+# def traverse_tree(node, indent=0):
+#     if isinstance(node, zarr.hierarchy.Group):
+#         print(f"{' '*indent}{node.name} with attrs: {list(node.attrs.items())}")
+#         for key in node.keys():
+#             traverse_tree(node[key], indent+2)
+#     elif isinstance(node, zarr.core.Array):
+#         print(f"{' '*indent}{node.name} with attrs: {list(node.attrs.items())}")
 
+# traverse_tree(demo)
 #%%
 # path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250214_072559.zarr')
 # path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250214_083920.zarr')
@@ -183,60 +196,57 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
 # path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250215_142312.zarr')
 
 # path_to_demo = Path('~/fish_leon/FISH/expert_demos/frankagym/FrankaInsertion-v1/120_240x320_all_twodim_left_to_right_annotated_start_idx_5hz_zstd7_EE_pxl_coords_expert_demos_imp_act/demos.zarr')
-path_to_demo = Path('~/fish_leon/FISH/expert_demos/frankagym/FrankaInsertion-v1/test_sim_small_demos_20hz_act/demos.zarr')
+# path_to_demo = Path('~/fish_leon/FISH/expert_demos/frankagym/FrankaInsertion-v1/test_sim_small_demos_20hz_act/demos.zarr')
 
-path_to_demo = path_to_demo.expanduser()
-demo = zarr.open(path_to_demo, 'rw+')
+dataset_name = 'sim_demos_left_of_4th_book_20hz_act'
+
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250214_072559.zarr')
+assert base_demo_path.exists()
+base_demo_path = base_demo_path.expanduser()
+demos_to_add_to_base_paths = [
+    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250214_083920.zarr'),
+]
+for demo_path in demos_to_add_to_base_paths:
+    assert demo_path.exists()
+    demo_path = demo_path.expanduser()
+
+all_demo_paths = [base_demo_path] + demos_to_add_to_base_paths
+for path_to_demo in all_demo_paths:
+    path_to_demo = path_to_demo.expanduser()
+    demo = zarr.open(path_to_demo, 'rw+')
+
+    path_to_json = path_to_demo.with_suffix('.json')
+    with open(path_to_json, 'r') as f:
+        meta_json = json.load(f)
+    num_episodes = len(demo.meta.episode_ends)
+    assert num_episodes == len(meta_json['episodes'])
+
+    trim_start_and_end_of_trajectories(demo, meta_json, total_action_norm_threshold=.005)
+
+merge_demos_into_base_demo(base_demo_path, demos_to_add_to_base_paths)
 #%%
-path_to_json = path_to_demo.with_suffix('.json')
-with open(path_to_json, 'r') as f:
-    meta_json = json.load(f)
-num_episodes = len(demo.meta.episode_ends)
-assert num_episodes == len(meta_json['episodes'])
-#%%
+demo = zarr.open(base_demo_path, 'rw+')
+meta_json = json.load(open(base_demo_path.with_suffix('.json'), 'r'))
+
 # add some needed meta attrs
 max_demo_length = 0
 for episode_dict in meta_json['episodes']:
     episode_length = episode_dict['elapsed_steps']
     if episode_length > max_demo_length:
         max_demo_length = episode_length
-#%%
+
 meta_json['max_demo_length'] = max_demo_length
 demo.meta.attrs['max_demo_length'] = max_demo_length
-#%%
 # update the json file
 with open(path_to_json, 'w') as f:
     json.dump(meta_json, f, indent=4)
-#%%
-# traverse the tree and print any attrs of groups or arrays
-def traverse_tree(node, indent=0):
-    if isinstance(node, zarr.hierarchy.Group):
-        print(f"{' '*indent}{node.name} with attrs: {list(node.attrs.items())}")
-        for key in node.keys():
-            traverse_tree(node[key], indent+2)
-    elif isinstance(node, zarr.core.Array):
-        print(f"{' '*indent}{node.name} with attrs: {list(node.attrs.items())}")
 
-traverse_tree(demo)
-
-#%%
-trim_start_and_end_of_trajectories(demo, meta_json, total_action_norm_threshold=.005)
-
-#%%
-# merge two demo datasets
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250215_123238.zarr')
-# base_demo = zarr.open('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250215_123238.zarr', 'rw+')
-
-demos_to_add_to_base_paths = [
-    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250215_142312.zarr'),
-]
-merge_demos_into_base_demo(base_demo_path, demos_to_add_to_base_paths)
-#%%
-#%%
 # move the zarr and json file to a directory
-dataset_name = 'test_sim_small_demos'
 # dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
+total_num_demos = len(demo.meta.episode_ends)
+dataset_name = f'{total_num_demos}_' + dataset_name
 dataset_root_dir = base_demo_path.parent
+
 new_dataset_dir = dataset_root_dir / dataset_name
 new_dataset_dir.mkdir(parents=True, exist_ok=True)
 #%%
@@ -254,20 +264,20 @@ new_json_path.rename(new_dataset_dir / 'demos.json')
 #%%
 
 #%%
-# create a tmp dataset for the trimmed trajectory
-plt.imshow(demo.data['observation.depth'][275])
-# plt.legend()
+# # create a tmp dataset for the trimmed trajectory
+# plt.imshow(demo.data['observation.depth'][275])
+# # plt.legend()
 
-#%%
-key='observation.rgb'
-# trajectory_idx = 0
+# #%%
+# key='observation.rgb'
+# # trajectory_idx = 0
 
-images_to_video(
-    images=demo.data[f'{key}'][:],
-    output_dir='./',
-    video_name='merged_trimmed_video',
-    fps=20,
-)
+# images_to_video(
+#     images=demo.data[f'{key}'][:],
+#     output_dir='./',
+#     video_name='merged_trimmed_video',
+#     fps=20,
+# )
 
 #%%
 # # create mask between new_episode_start and new_episode_end

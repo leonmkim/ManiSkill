@@ -16,8 +16,6 @@ from mani_skill.utils.visualization.misc import images_to_video
 from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
 
-import multiprocessing
-
 from pathlib import Path
 
 import cv2
@@ -26,8 +24,12 @@ import time
 
 from mani_skill.utils.teleoperation import SpacemouseInput
 #%%
+
+    
 spacemouse_input = SpacemouseInput()
 desired_viewing_size = (256, 256)
+output_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop")
+record_demonstrations = False
 
 #%%
 ## testing book insertion task
@@ -60,7 +62,18 @@ env = gym.make(
         shader_pack="minimal"
     )
 )
-seed = 0
+if record_demonstrations:
+    # env = RecordEpisode(
+    env = RecordEpisodeZarr(
+        env,
+        output_dir=output_dir,
+        save_video=False,
+        info_on_video=False,
+        record_reward=False,
+        source_type="teleoperation",
+        source_desc="teleoperation via spacemouse",
+    )
+seed = 31
 num_trajs = 0
 #%%
 sim_dt = 1.0 / env.sim_config.sim_freq
@@ -74,6 +87,18 @@ human_render_cam_extrinsic_cv = human_render_cam_params['extrinsic_cv'][0]
 base_camera_cam2world_gl = env.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
 base_camera_extrinsic_cv = env.scene.sensors['base_camera'].get_params()['extrinsic_cv'][0]
 #%% 
+# segmentation_id_exclusion_list = list()
+# for i in range(9):
+#     segmentation_id_exclusion_list.append(f"panda_link{i}")
+# segmentation_id_exclusion_list.extend(["panda_hand", "panda_hand_tcp", "panda_leftfinger", "panda_rightfinger", "panda_leftfinger_pad", "panda_rightfinger_pad"])
+# segmentation_id_exclusion_list.extend(["target_EE_pose", "camera_pose"])
+# segmentation_map_ids = dict()
+# for key, value in env.segmentation_id_map.items():
+#     entity_name = value.name
+#     if entity_name not in segmentation_id_exclusion_list:
+#         segmentation_map_ids[entity_name] = key
+
+# %%
 obs, info = env.reset(seed=seed)
 #%%
 # frame = obs['sensor_data']['base_camera']['segmentation'][0].cpu().numpy()
@@ -141,23 +166,23 @@ while True:
             time.sleep(time_to_sleep)
         if elapsed_timesteps % 100 == 0:
             print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
-            print(f"success: {info['success']} | success duration: {info['elapsed_success_duration']} | t. success: {info['transient_success']} | z_distance: {info['z_distance_bw_top_of_grasped_book_and_top_of_slot']}")
     
-    if key == ord('q'):
-        num_trajs += 1
-        break
-    elif key == ord('c'):
-        seed += 1
-        num_trajs += 1
-        env.reset(seed=seed)
-        viewer = env.render_human()
-        spacemouse_input.reset()
-        continue
-    elif key == ord('r'):
-        env.reset(seed=seed, options=dict(save_trajectory=False))
-        viewer = env.render_human()
-        spacemouse_input.reset()
-        continue
+    if record_demonstrations:
+        if key == ord('q'):
+            num_trajs += 1
+            break
+        elif key == ord('c'):
+            seed += 1
+            num_trajs += 1
+            env.reset(seed=seed)
+            viewer = env.render_human()
+            spacemouse_input.reset()
+            continue
+        elif key == ord('r'):
+            env.reset(seed=seed, options=dict(save_trajectory=False))
+            viewer = env.render_human()
+            spacemouse_input.reset()
+            continue
     else:
         break
 

@@ -16,7 +16,7 @@ from mani_skill.utils.building.actors.common import build_coordinate_frame
 from mani_skill.utils.structs import Actor, Pose
 from mani_skill.utils.structs.types import SimConfig
 
-from mani_skill.utils.geometry.rotation_conversions import quaternion_multiply, axis_angle_to_quaternion
+from mani_skill.utils.geometry.rotation_conversions import quaternion_multiply, axis_angle_to_quaternion, quaternion_apply
 from mani_skill.utils.geometry.geometry import transform_points
 import einops
 
@@ -92,6 +92,12 @@ class BookInsertionEnv(BaseEnv):
     cam_resize_factor: float = 0.5
 
     max_extrinsic_contacts: int = 50 # for padding
+
+    # success conditions
+    book_toppled_angle_with_vertical_threshold: float = np.deg2rad(45)
+    # from base of gripper fingers to tip of fingers is .047m
+    top_of_grasped_book_distance_to_top_of_slot_threshold: float = 0.047 + .02
+    success_duration_threshold: float = 3.0 # seconds
 
     def __init__(
         self,
@@ -191,6 +197,23 @@ class BookInsertionEnv(BaseEnv):
 
             self.target_EE_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="target_EE_pose", body_type="kinematic")
             self._hidden_objects.append(self.target_EE_pose)
+
+            # >>>>>>>>> for debugging
+            # self.top_of_slot_viz_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="top_of_slot_viz_pose", body_type="kinematic")
+            # self._hidden_objects.append(self.top_of_slot_viz_pose)
+
+            # self.bottom_inner_corner_of_book_left_of_slot_viz_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="bottom_inner_corner_of_book_left_of_slot_viz_pose", body_type="kinematic")
+            # self._hidden_objects.append(self.bottom_inner_corner_of_book_left_of_slot_viz_pose)
+
+            # self.bottom_inner_corner_of_book_right_of_slot_viz_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="bottom_inner_corner_of_book_right_of_slot_viz_pose", body_type="kinematic")
+            # self._hidden_objects.append(self.bottom_inner_corner_of_book_right_of_slot_viz_pose)
+
+            # self.bottom_of_grasped_book_viz_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="bottom_of_grasped_book_viz_pose", body_type="kinematic")
+            # self._hidden_objects.append(self.bottom_of_grasped_book_viz_pose)
+
+            # self.top_of_grasped_book_viz_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="top_of_grasped_book_viz_pose", body_type="kinematic")
+            # self._hidden_objects.append(self.top_of_grasped_book_viz_pose)
+            # <<<<<<<<< for debugging
 
             self.camera_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="camera_pose", body_type="kinematic")
             self._hidden_objects.append(self.camera_pose)
@@ -360,23 +383,23 @@ class BookInsertionEnv(BaseEnv):
             quat = quaternion_multiply(quat, axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])))
             self.grasped_book.set_pose(Pose.create_from_pq(pos, quat))
 
-            xy_slot_location = common.to_tensor(np.zeros((b, 2)))
-            xy_slot_location[:, 0] = end_effector_pose[:, 0]
-            xy_slot_location[:, 1] = 0
+            self.xy_slot_location = torch.zeros((b, 2))
+            self.xy_slot_location[:, 0] = end_effector_pose[:, 0]
+            self.xy_slot_location[:, 1] = 0
 
             slot_width = self.grasped_book_sizes[:, 1] - .0035
 
-            quat = torch.tensor([0, 0, 0, 1]).repeat(b, 1)
+            quat = torch.tensor([0., 0, 0, 1]).repeat(b, 1)
             # compute the env book poses
             for j in range(len(self.env_books)):
                 pos = torch.zeros((b, 3))
-                pos[:, 0] = xy_slot_location[:, 0] - self.env_book_sizes[:, j, 0]/2 + .15/2
+                pos[:, 0] = self.xy_slot_location[:, 0] - self.env_book_sizes[:, j, 0]/2 + .15/2
                 pos[:, 2] = self.env_book_sizes[:, j, 2]/2 + .001
                 if j < self.slot_left_of_book_index:
-                    pos[:, 1] = xy_slot_location[:, 1] - ((slot_width/2) + self.env_book_sizes[:, j+1:self.slot_left_of_book_index, 1].sum(dim=1))
+                    pos[:, 1] = self.xy_slot_location[:, 1] - ((slot_width/2) + self.env_book_sizes[:, j+1:self.slot_left_of_book_index, 1].sum(dim=1))
                     pos[:, 1] += -self.env_book_sizes[:, j, 1]/2
                 else:
-                    pos[:, 1] = xy_slot_location[:, 1] + ((slot_width/2) + self.env_book_sizes[:, self.slot_left_of_book_index:j, 1].sum(dim=1))
+                    pos[:, 1] = self.xy_slot_location[:, 1] + ((slot_width/2) + self.env_book_sizes[:, self.slot_left_of_book_index:j, 1].sum(dim=1))
                     pos[:, 1] += self.env_book_sizes[:, j, 1]/2
 
                 self.env_books[j].set_pose(Pose.create_from_pq(pos, quat))   
@@ -393,12 +416,22 @@ class BookInsertionEnv(BaseEnv):
             self.base_camera_cam2world_gl = self.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
             self.base_camera_extrinsic_cv = self.scene.sensors['base_camera'].get_params()['extrinsic_cv']
             # extrinsic cv is bx3x4 so add a row of [0,0,0,1] to make it bx4x4
-            self.base_camera_extrinsic_cv = torch.cat([self.base_camera_extrinsic_cv, torch.tensor([[[0,0,0,1]]])], dim=1)
+            self.base_camera_extrinsic_cv = torch.cat([self.base_camera_extrinsic_cv, torch.tensor([[[0,0,0,1.]]])], dim=1)
+
+            self.elapsed_success_duration = torch.zeros(b)
+            self.last_eval_bool = torch.zeros(b, dtype=torch.bool)
 
     # def _after_simulation_step(self):
-    #     # update target EE pose
-    #     target_EE_pose = self.agent.controller.get_state()['arm']['target_pose']
-    #     self.target_EE_pose.set_pose(Pose.create_from_pq(target_EE_pose[:, :3], target_EE_pose[:, 3:]))
+    #     # update viz poses
+    #     self.top_of_slot_viz_pose.set_pose(self.top_of_slot_pose)
+
+    #     self.bottom_inner_corner_of_book_left_of_slot_viz_pose.set_pose(self.bottom_inner_corner_of_book_left_of_slot_pose)
+
+    #     self.bottom_inner_corner_of_book_right_of_slot_viz_pose.set_pose(self.bottom_inner_corner_of_book_right_of_slot_pose)
+
+    #     self.bottom_of_grasped_book_viz_pose.set_pose(self.bottom_of_grasped_book_pose)
+
+    #     self.top_of_grasped_book_viz_pose.set_pose(self.top_of_grasped_book_pose)
 
     def _after_control_step(self):
         # update target EE pose
@@ -441,62 +474,276 @@ class BookInsertionEnv(BaseEnv):
 
         # filter out points outside of image plane
         projected_points = projected_points.int()
-        
+    
         return projected_points
             
     def project_contact_positions_to_camera(self, contact_positions):
         # TODO extend to multiple envs
         # contact_positions: bxNx3
         # filter out nan rows
-        b, N, _ = contact_positions.shape
-        contact_positions = contact_positions[~torch.any(torch.isnan(contact_positions), dim=2)].reshape(b, -1, 3)
-        b, N, _ = contact_positions.shape
-        contact_map = torch.zeros((b, self.camera_height, self.camera_width, 1), device=contact_positions.device)
-        # convert contact positions to camera frame
-        if N > 0:
-            projected_points = self.batched_position_to_pixel_coordinates(contact_positions)
-            
-            # swap u and v to match image coordinates
-            projected_points = projected_points[..., [1, 0]]
-            
-            # filter out points outside of image plane
-            valid_points = (projected_points[..., 0] >= 0) & (projected_points[..., 0] < self.camera_height) & (projected_points[..., 1] >= 0) & (projected_points[..., 1] < self.camera_width)
-            projected_points = projected_points[valid_points]
+        with torch.device(self.device):
+            b, N, _ = contact_positions.shape
+            contact_positions = contact_positions[~torch.any(torch.isnan(contact_positions), dim=2)].reshape(b, -1, 3)
+            b, N, _ = contact_positions.shape
+            contact_map = torch.zeros((b, self.camera_height, self.camera_width, 1), device=contact_positions.device)
+            # convert contact positions to camera frame
+            if N > 0:
+                projected_points = self.batched_position_to_pixel_coordinates(contact_positions)
+                
+                # swap u and v to match image coordinates
+                projected_points = projected_points[..., [1, 0]]
+                
+                # filter out points outside of image plane
+                valid_points = (projected_points[..., 0] >= 0) & (projected_points[..., 0] < self.camera_height) & (projected_points[..., 1] >= 0) & (projected_points[..., 1] < self.camera_width)
+                projected_points = projected_points[valid_points]
 
-            # add index for batch dimension
-            projected_points = torch.cat([torch.zeros((projected_points.shape[0], 1), device=projected_points.device, dtype=torch.int), projected_points], dim=1)
-            # index into contact_map and set valid points to 1
-            contact_map[tuple(projected_points.T)] = 1
+                # add index for batch dimension
+                projected_points = torch.cat([torch.zeros((projected_points.shape[0], 1), device=projected_points.device, dtype=torch.int), projected_points], dim=1)
+                # index into contact_map and set valid points to 1
+                contact_map[tuple(projected_points.T)] = 1
         return contact_map
 
     def get_extrinsic_contact_positions(self):
-        assert self.num_envs == 1, "Only supports single envs for now"
-        # TODO extend to multiple envs
-        contact_positions = torch.nan*torch.ones((1, self.max_extrinsic_contacts, 3), device=self.device)
-        contacts = self.scene.get_contacts()
-        filtered_contacts = list()
-        # filter contacts to only include contacts between grasped_book
-        if len(contacts) > 0:
-            for contact in contacts:
-                body_name_0 = contact.bodies[0].entity.name
-                body_name_1 = contact.bodies[1].entity.name
-                if 'grasped_book' in body_name_0 or 'grasped_book' in body_name_1:
-                    # and not contact panda
-                    if 'panda' not in body_name_0 and 'panda' not in body_name_1:
-                        filtered_contacts.append(contact)
-        contacts = filtered_contacts
-        contact_idx = 0
-        if len(contacts) > 0:
-            for contact in contacts:
-                for contact_point in contact.points:
-                    if np.linalg.norm(contact_point.impulse) > 0:
-                        contact_positions[0, contact_idx] = torch.from_numpy(contact_point.position)
-                        contact_idx += 1
-                        # torch.from_numpy(contact_point.position)
-                # contact_positions.extend([torch.from_numpy(contact_point.position) for contact_point in contact.points])
-        return contact_positions # bxNx3
+        with torch.device(self.device):
+            assert self.num_envs == 1, "Only supports single envs for now"
+            # TODO extend to multiple envs
+            contact_positions = torch.nan*torch.ones((1, self.max_extrinsic_contacts, 3))
+            contacts = self.scene.get_contacts()
+            filtered_contacts = list()
+            # filter contacts to only include contacts between grasped_book
+            if len(contacts) > 0:
+                for contact in contacts:
+                    body_name_0 = contact.bodies[0].entity.name
+                    body_name_1 = contact.bodies[1].entity.name
+                    if 'grasped_book' in body_name_0 or 'grasped_book' in body_name_1:
+                        # and not contact panda
+                        if 'panda' not in body_name_0 and 'panda' not in body_name_1:
+                            filtered_contacts.append(contact)
+            contacts = filtered_contacts
+            contact_idx = 0
+            if len(contacts) > 0:
+                for contact in contacts:
+                    for contact_point in contact.points:
+                        if np.linalg.norm(contact_point.impulse) > 0:
+                            contact_positions[0, contact_idx] = torch.from_numpy(contact_point.position)
+                            contact_idx += 1
+                            # torch.from_numpy(contact_point.position)
+                    # contact_positions.extend([torch.from_numpy(contact_point.position) for contact_point in contact.points])
+            return contact_positions # bxNx3
     
+    # compute boolean task stages for reward computation
+    # first stage: reach to the book
+    # def reach_to_book(self):
+
     # # save some commonly used attributes
+    @property
+    def time_between_env_steps(self):
+        # time in seconds between each environment step
+        return 1.0/self.sim_config.control_freq
+    
+    @property
+    def top_of_slot_pose(self):
+        with torch.device(self.device):
+            # defined as centered in x-y of slot, and with z at the higher of the two neighboring books
+            # bx7
+            pos = torch.zeros((self.num_envs, 3))
+            pos[:, 0] = self.xy_slot_location[:, 0]
+            
+            # pos[:, 1] = self.xy_slot_location[:, 1]
+            # use the midpoint of the two books as the y position
+            pos[:, 1] = (self.bottom_inner_corner_of_book_left_of_slot_pose.p[:, 1] + self.bottom_inner_corner_of_book_right_of_slot_pose.p[:, 1])/2
+            
+            height_of_left_book = self.env_book_sizes[:, self.slot_left_of_book_index-1, 2]
+            height_of_right_book = self.env_book_sizes[:, self.slot_left_of_book_index, 2]
+            pos[:, 2] = torch.maximum(height_of_left_book, height_of_right_book)
+            
+            # set orientation to be identity (to world frame)
+            pose = Pose.create_from_pq(p=pos)
+        return pose
+    
+    @property
+    def bottom_inner_corner_of_book_right_of_slot_pose(self):
+        with torch.device(self.device):
+            bottom_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, -self.env_book_sizes[:, self.slot_left_of_book_index, 1]/2, -self.env_book_sizes[:, self.slot_left_of_book_index, 2]/2]))
+            # then also apply 180 intrinsic rotation around z-axis to get x to point in same direction as world
+            quat_to_correct_orientation = axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])).repeat(self.num_envs, 1)
+        return self.env_books[self.slot_left_of_book_index].pose * bottom_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
+    
+    @property
+    def top_inner_corner_of_book_right_of_slot_pose(self):
+        with torch.device(self.device):
+            top_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, -self.env_book_sizes[:, self.slot_left_of_book_index, 1]/2, self.env_book_sizes[:, self.slot_left_of_book_index, 2]/2]))
+            # then also apply 180 intrinsic rotation around z-axis to get x to point in same direction as world
+            quat_to_correct_orientation = axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])).repeat(self.num_envs, 1)
+        return self.env_books[self.slot_left_of_book_index].pose * top_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
+
+    @property
+    def bottom_inner_corner_of_book_left_of_slot_pose(self):
+        with torch.device(self.device):
+            bottom_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, self.env_book_sizes[:, self.slot_left_of_book_index-1, 1]/2, -self.env_book_sizes[:, self.slot_left_of_book_index-1, 2]/2]))
+            # then also apply 180 intrinsic rotation around z-axis to get x to point in same direction as world
+            quat_to_correct_orientation = axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])).repeat(self.num_envs, 1)
+        return self.env_books[self.slot_left_of_book_index-1].pose * bottom_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
+    
+    @property
+    def top_inner_corner_of_book_left_of_slot_pose(self):
+        with torch.device(self.device):
+            top_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, self.env_book_sizes[:, self.slot_left_of_book_index-1, 1]/2, self.env_book_sizes[:, self.slot_left_of_book_index-1, 2]/2]))
+            # then also apply 180 intrinsic rotation around z-axis to get x to point in same direction as world
+            quat_to_correct_orientation = axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])).repeat(self.num_envs, 1)
+        return self.env_books[self.slot_left_of_book_index-1].pose * top_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
+    
+    @property
+    def bottom_of_grasped_book_pose(self):
+        # recall grasped book is rotated "upside down" as it is initialized with the gripper pose which has z-down
+        with torch.device(self.device):
+            # bx7
+            # apply 180 intrinsic rotation around x-axis
+            quat_to_correct_orientation  = axis_angle_to_quaternion(torch.tensor([np.pi, 0, 0])).repeat(self.num_envs, 1)
+            # then also apply 180 intrinsic rotation around z-axis to get x to point in same direction as world
+            quat_to_correct_orientation = quaternion_multiply(quat_to_correct_orientation, axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])))
+            offset_to_bottom_of_book = Pose.create_from_pq(p=torch.tensor([0, 0, self.grasped_book_sizes[:, 2]/2]))
+        return self.grasped_book.pose * offset_to_bottom_of_book * Pose.create_from_pq(q=quat_to_correct_orientation)
+    
+    @property
+    def top_of_grasped_book_pose(self):
+        # recall grasped book is rotated "upside down" as it is initialized with the gripper pose which has z-down. Also x points away from binding towards pages
+        with torch.device(self.device):
+            # bx7
+            # apply 180 intrinsic rotation around x-axis
+            quat_to_correct_orientation  = axis_angle_to_quaternion(torch.tensor([np.pi, 0, 0])).repeat(self.num_envs, 1)
+            # then also apply 180 intrinsic rotation around z-axis to get x to point in same direction as world
+            quat_to_correct_orientation = quaternion_multiply(quat_to_correct_orientation, axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])))
+            offset_to_top_of_book = Pose.create_from_pq(p=torch.tensor([0, 0, -self.grasped_book_sizes[:, 2]/2]))
+        return self.grasped_book.pose * offset_to_top_of_book * Pose.create_from_pq(q=quat_to_correct_orientation)
+    
+    @property
+    def distance_between_bottom_of_grasped_book_and_top_of_slot(self):
+        with torch.device(self.device):
+            # b
+            top_of_slot_pos = self.top_of_slot_pose.p
+            bottom_of_grasped_book_pos = self.bottom_of_grasped_book_pose.p
+            distance = torch.linalg.norm(top_of_slot_pos - bottom_of_grasped_book_pos, axis=1, ord=2)
+        return distance
+    
+    @property
+    def z_distance_between_top_of_grasped_book_and_top_of_slot(self):
+        with torch.device(self.device):
+            # b
+            top_of_slot_pos = self.top_of_slot_pose.p
+            top_of_grasped_book_pos = self.top_of_grasped_book_pose.p
+            z_distance = top_of_grasped_book_pos[:, 2] - top_of_slot_pos[:, 2]
+            # distance = torch.linalg.norm(top_of_slot_pos - top_of_grasped_book_pos, axis=1, ord=2)
+        return z_distance
+
+    @property    
+    def grasped_book_is_grasped(self):
+        # check whether grasped_book is still in gripper
+        return self.agent.is_grasping(self.grasped_book)
+    
+    @property
+    def grasped_book_pushing_book_right_of_slot(self):
+        with torch.device(self.device):
+            assert self.num_envs == 1, "Only supports single envs for now"
+            contact_forces = self.scene.get_pairwise_contact_forces(
+                self.grasped_book, self.env_books[self.slot_left_of_book_index]
+            )        
+            force = torch.linalg.norm(contact_forces, axis=1)
+            # make sure force is pointing rightward (pushing in positive y direction)
+            right_direction = torch.tensor([0., 1, 0]).repeat(self.num_envs, 1)
+            # dot product should be positive
+            dot_product = torch.sum(contact_forces * right_direction, dim=1)
+            pushing = torch.logical_and(force > 0, dot_product > 0)
+        return pushing
+    
+    @property
+    def grasped_book_pushing_book_left_of_slot(self):
+        with torch.device(self.device):
+            assert self.num_envs == 1, "Only supports single envs for now"
+            contact_forces = self.scene.get_pairwise_contact_forces(
+                self.grasped_book, self.env_books[self.slot_left_of_book_index-1]
+            )        
+            force = torch.linalg.norm(contact_forces, axis=1)
+            # make sure force is pointing leftward (pushing in negative y direction)
+            left_direction = torch.tensor([0., -1, 0]).repeat(self.num_envs, 1)
+            # dot product should be positive
+            dot_product = torch.sum(contact_forces * left_direction, dim=1)
+            pushing = torch.logical_and(force > 0, dot_product > 0)
+        return pushing
+
+    def angle_of_pose_with_vertical(self, pose: Pose):
+        with torch.device(self.device):
+            # get the direction of the actor
+            actor_direction = quaternion_apply(pose.q, torch.tensor([0, 0, 1.]).repeat(self.num_envs, 1))
+            # get the vertical direction
+            vertical_direction = torch.tensor([0, 0, 1.]).repeat(self.num_envs, 1)
+            angle_with_vertical = common.compute_angle_between(actor_direction, vertical_direction)
+        return angle_with_vertical
+    
+    @property
+    def any_env_books_toppled(self):
+        with torch.device(self.device):
+            # check if any env books have toppled
+            # check if the angle of the books with the vertical is greater than 45 degrees
+            # create a bxN tensor of angles
+            angles = torch.zeros((self.num_envs, self.num_env_books))
+            for j in range(self.num_env_books):
+                angles[:, j] = self.angle_of_pose_with_vertical(self.env_books[j].pose)
+            # check if any of the angles are greater than 45 degrees
+            toppled = torch.any(angles > self.book_toppled_angle_with_vertical_threshold, dim=1)
+        return toppled
+    
+    @property
+    def bottom_of_grasped_book_within_slot(self):
+        # just evaluates whether y is between the two books
+        with torch.device(self.device):
+            bottom_of_grasped_book_y = self.bottom_of_grasped_book_pose.p[:, 1]
+            left_book_y = self.bottom_inner_corner_of_book_left_of_slot_pose.p[:, 1]
+            right_book_y = self.bottom_inner_corner_of_book_right_of_slot_pose.p[:, 1]
+            within = torch.logical_and(bottom_of_grasped_book_y > left_book_y, bottom_of_grasped_book_y < right_book_y)
+        return within
+    
+    @property
+    def top_of_grasped_book_within_slot(self):
+        # just evaluates whether y is between the two books
+        with torch.device(self.device):
+            top_of_grasped_book_y = self.top_of_grasped_book_pose.p[:, 1]
+            left_book_y = self.top_inner_corner_of_book_left_of_slot_pose.p[:, 1]
+            right_book_y = self.top_inner_corner_of_book_right_of_slot_pose.p[:, 1]
+            within = torch.logical_and(top_of_grasped_book_y > left_book_y, top_of_grasped_book_y < right_book_y)
+        return within
+    
+    def evaluate(self):
+        # to succeed: 
+        # no env books should be toppled 
+        # & the grasped book top and bottom must be within the slot in x-y
+        # & top of grasped book must be close to the top of the slot
+        # & above conditions must have held for 
+        not_toppled = ~self.any_env_books_toppled
+        bottom_within_slot = self.bottom_of_grasped_book_within_slot
+        top_within_slot = self.top_of_grasped_book_within_slot
+        z_distance_bw_top_of_grasped_book_and_top_of_slot = self.z_distance_between_top_of_grasped_book_and_top_of_slot
+        close_to_top_of_slot = z_distance_bw_top_of_grasped_book_and_top_of_slot < self.top_of_grasped_book_distance_to_top_of_slot_threshold
+        transient_success = torch.logical_and(
+            not_toppled, torch.logical_and(
+                bottom_within_slot, torch.logical_and(
+                    top_within_slot, 
+                        close_to_top_of_slot)))
+        success_in_a_row = torch.logical_and(transient_success, self.last_eval_bool)
+        self.elapsed_success_duration += success_in_a_row.float() * self.time_between_env_steps
+        self.elapsed_success_duration *= transient_success.float() # reset to 0 if not transient success
+        success = self.elapsed_success_duration > self.success_duration_threshold
+        self.last_eval_bool = transient_success
+        return dict(
+            success=success,
+            transient_success=transient_success, 
+            elapsed_success_duration=self.elapsed_success_duration,
+            z_distance_bw_top_of_grasped_book_and_top_of_slot=z_distance_bw_top_of_grasped_book_and_top_of_slot,
+            not_toppled=not_toppled,
+            top_within_slot=top_within_slot,
+            bottom_within_slot=bottom_within_slot,
+            )
+
     # @property
     # def peg_head_pos(self):
     #     return self.peg.pose.p + self.peg_head_offsets.p
