@@ -15,6 +15,7 @@ from mani_skill.utils.scene_builder.table import TableSceneBuilder, SimpleTableS
 from mani_skill.utils.building.actors.common import build_coordinate_frame
 from mani_skill.utils.structs import Actor, Pose
 from mani_skill.utils.structs.types import SimConfig
+from mani_skill.utils.geometry.rotation_conversions import matrix_to_quaternion
 
 from mani_skill.utils.geometry.rotation_conversions import quaternion_multiply, axis_angle_to_quaternion, quaternion_apply
 from mani_skill.utils.geometry.geometry import transform_points
@@ -94,10 +95,15 @@ class BookInsertionEnv(BaseEnv):
     max_extrinsic_contacts: int = 50 # for padding
 
     # success conditions
-    book_toppled_angle_with_vertical_threshold: float = np.deg2rad(45)
-    # from base of gripper fingers to tip of fingers is .047m
-    top_of_grasped_book_distance_to_top_of_slot_threshold: float = 0.047 + .02
-    success_duration_threshold: float = 3.0 # seconds
+    success_criteria_params: Dict[str, Any] = dict(
+        book_toppled_angle_with_vertical_threshold=np.deg2rad(45),
+        top_of_grasped_book_distance_to_top_of_slot_threshold=0.047 + .02,
+        success_duration_threshold=3.0, # seconds        
+    )
+    # book_toppled_angle_with_vertical_threshold: float = np.deg2rad(45)
+    # # from base of gripper fingers to tip of fingers is .047m
+    # top_of_grasped_book_distance_to_top_of_slot_threshold: float = 0.047 + .02
+    # success_duration_threshold: float = 3.0 # seconds
 
     def __init__(
         self,
@@ -185,7 +191,7 @@ class BookInsertionEnv(BaseEnv):
         pose = sapien_utils.look_at(eye, look_at)
 
         # return CameraConfig("render_camera", pose, 512, 512, 1, 0.01, 100)
-        return CameraConfig("render_camera", pose, 128, 128, 1, 0.01, 5.0)
+        return CameraConfig("render_camera", pose, 256, 256, 1, 0.01, 5.0)
 
     def _load_agent(self, options: dict):
         super()._load_agent(options, sapien.Pose(p=[-0.615, 0, 0]))
@@ -213,10 +219,11 @@ class BookInsertionEnv(BaseEnv):
 
             # self.top_of_grasped_book_viz_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="top_of_grasped_book_viz_pose", body_type="kinematic")
             # self._hidden_objects.append(self.top_of_grasped_book_viz_pose)
+            
+            # self.camera_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="camera_pose", body_type="kinematic")
+            # self._hidden_objects.append(self.camera_pose)
             # <<<<<<<<< for debugging
 
-            self.camera_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="camera_pose", body_type="kinematic")
-            self._hidden_objects.append(self.camera_pose)
 
             grasped_book_lengths = self._batched_episode_rng.uniform(0.1, 0.15)
             grasped_book_widths = self._batched_episode_rng.uniform(0.03, 0.065) # max gripper width is .08
@@ -407,10 +414,9 @@ class BookInsertionEnv(BaseEnv):
             # target_EE_pose = self.agent.controller.get_state()['arm']['target_pose']
             self.target_EE_pose.set_pose(end_effector_pose)
 
-            from mani_skill.utils.geometry.rotation_conversions import matrix_to_quaternion
-            camera_pose = self.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
-            cam_rot = quaternion_multiply(matrix_to_quaternion(camera_pose[:3, :3]), axis_angle_to_quaternion(torch.tensor([np.pi, 0, 0])))
-            self.camera_pose.set_pose(Pose.create_from_pq(p=camera_pose[:3, 3], q=cam_rot))
+            # camera_pose = self.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
+            # cam_rot = quaternion_multiply(matrix_to_quaternion(camera_pose[:3, :3]), axis_angle_to_quaternion(torch.tensor([np.pi, 0, 0])))
+            # self.camera_pose.set_pose(Pose.create_from_pq(p=camera_pose[:3, 3], q=cam_rot))
 
             self.base_camera_intrinsic = self.scene.sensors['base_camera'].get_params()['intrinsic_cv']
             self.base_camera_cam2world_gl = self.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
@@ -690,7 +696,7 @@ class BookInsertionEnv(BaseEnv):
             for j in range(self.num_env_books):
                 angles[:, j] = self.angle_of_pose_with_vertical(self.env_books[j].pose)
             # check if any of the angles are greater than 45 degrees
-            toppled = torch.any(angles > self.book_toppled_angle_with_vertical_threshold, dim=1)
+            toppled = torch.any(angles > self.success_criteria_params['book_toppled_angle_with_vertical_threshold'], dim=1)
         return toppled
     
     @property
@@ -723,7 +729,7 @@ class BookInsertionEnv(BaseEnv):
         bottom_within_slot = self.bottom_of_grasped_book_within_slot
         top_within_slot = self.top_of_grasped_book_within_slot
         z_distance_bw_top_of_grasped_book_and_top_of_slot = self.z_distance_between_top_of_grasped_book_and_top_of_slot
-        close_to_top_of_slot = z_distance_bw_top_of_grasped_book_and_top_of_slot < self.top_of_grasped_book_distance_to_top_of_slot_threshold
+        close_to_top_of_slot = z_distance_bw_top_of_grasped_book_and_top_of_slot < self.success_criteria_params['top_of_grasped_book_distance_to_top_of_slot_threshold']
         transient_success = torch.logical_and(
             not_toppled, torch.logical_and(
                 bottom_within_slot, torch.logical_and(
@@ -732,7 +738,7 @@ class BookInsertionEnv(BaseEnv):
         success_in_a_row = torch.logical_and(transient_success, self.last_eval_bool)
         self.elapsed_success_duration += success_in_a_row.float() * self.time_between_env_steps
         self.elapsed_success_duration *= transient_success.float() # reset to 0 if not transient success
-        success = self.elapsed_success_duration > self.success_duration_threshold
+        success = self.elapsed_success_duration > self.success_criteria_params['success_duration_threshold']
         self.last_eval_bool = transient_success
         return dict(
             success=success,

@@ -106,18 +106,18 @@ obs, info = env.reset(seed=seed)
 # plt.imshow(frame)
 # plt.imshow(obs['sensor_data']['base_camera']['Color'][0][:,:,3].cpu().numpy())
 #%%
-# cv2.namedWindow("frame", cv2.WINDOW_AUTOSIZE)
+cv2.namedWindow("frame", cv2.WINDOW_AUTOSIZE)
 
 # frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
 # frame = (frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
-# frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
+frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
 # frame = cv2.cvtColor(env.render()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
 
 # frame = cv2.resize(frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
-# cv2.imshow("frame", frame)
+cv2.imshow("frame", frame)
 # plt.imshow(frame)
 
-viewer = env.render_human()
+# viewer = env.render_human()
 # viewer.paused = True
 #%%
 # frames = [env.render_rgb_array()[0].cpu().numpy()]
@@ -129,32 +129,32 @@ while True:
         action = spacemouse_input.get_action()
         obs, reward, terminated, truncated, info = env.step(action)
 
-        env.render_human()
+        # env.render_human()
 
-        # current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
+        current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
         # current_frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
         # current_frame = obs['sensor_data']['base_camera']['Color'][0][:,:,:3].cpu().numpy()
 
         # current_frame = (current_frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
         # current_frame = cv2.resize(current_frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
 
-        # cv2.imshow("frame", current_frame)
-        # key = cv2.waitKey(1) & 0xFF
-        # if key == ord('q') or key == ord('c') or key == ord('r'):
-        #     break
+        cv2.imshow("frame", current_frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q') or key == ord('c') or key == ord('r'):
+            break
         
-        if viewer.window.key_press('q'):
-            # q: quit the script and stop collecting data. Save trajectories and optionally videos.
-            # c: stop this episode and record the trajectory and move on to a new episode
-            # r: restart
-            key = ord('q')
-            break
-        elif viewer.window.key_press('c'): 
-            key = ord('c')
-            break
-        elif viewer.window.key_press('r'):
-            key = ord('r')
-            break
+        # if viewer.window.key_press('q'):
+        #     # q: quit the script and stop collecting data. Save trajectories and optionally videos.
+        #     # c: stop this episode and record the trajectory and move on to a new episode
+        #     # r: restart
+        #     key = ord('q')
+        #     break
+        # elif viewer.window.key_press('c'): 
+        #     key = ord('c')
+        #     break
+        # elif viewer.window.key_press('r'):
+        #     key = ord('r')
+        #     break
 
         # frames.append(current_frame)
         elapsed_timesteps = info["elapsed_steps"].item()
