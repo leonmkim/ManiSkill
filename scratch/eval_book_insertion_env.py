@@ -25,25 +25,28 @@ import time
 
 import einops
 
-from mani_skill.utils.teleoperation import SpacemouseInput
-import sys
+from lerobot.common.utils.utils import _relative_path_between
 #%%
 # add FISH directory to the path
+import sys
 path_to_fish = Path('~/fish_leon').expanduser()
 sys.path.append(str(path_to_fish))
 from FISH.agent.diffusion_policy import DiffusionPolicyAgent, DiffusionPolicyAgentConfig
 #%%
+import hydra
 from hydra import compose, initialize
 from omegaconf import OmegaConf
 
 with initialize(version_base=None, config_path="cfgs", job_name="test_app"):
-    omegaconf_cfg = compose(config_name="config_eval", overrides=["agent=diffusion"])
+    omegaconf_cfg = compose(config_name="config_eval", overrides=["agent=diffusion", "suite=frankagym", "suite/frankagym_task@_global_=insertion", "use_wandb=false"])
 
-print(OmegaConf.to_yaml(omegaconf_cfg))
+# print(OmegaConf.to_yaml(omegaconf_cfg))
 #%%
 def make_agent(cfg):
 	dataset_statistics = None # this will be loaded from the checkpoint
 	return hydra.utils.instantiate(cfg, dataset_statistics)
+
+#%%
 
 #%%
 class DiffusionPolicyManiskillWrapper:
@@ -52,14 +55,17 @@ class DiffusionPolicyManiskillWrapper:
     cfg,
     segmentation_id_map: dict, 
     sim_control_freq: int, 
-    num_envs: int
+    num_envs: int,
+    env_device: str = 'cpu'
     ):
         # >>>>>>>>>> make diffusion policy using omegaconf
         self.cfg = cfg
+        self.loading_uncompiled_checkpoint_with_compile = False
+        self.loading_compiled_checkpoint_with_no_compile = False
         snapshot_path = Path(self.cfg.checkpoint_weight_dir) / f'snapshot_{self.cfg.checkpoint_epoch}.pt' 
         self.load_checkpoint_conf(snapshot_path=snapshot_path)
 
-        self.policy = make_agent(cfg)
+        self.policy = make_agent(self.cfg.agent)
 
         if not self.loading_uncompiled_checkpoint_with_compile and self.cfg.agent.config.compile:
             self.policy.compile_modules()
@@ -72,14 +78,26 @@ class DiffusionPolicyManiskillWrapper:
         self.policy.train(False)
         # <<<<<<<<<< make diffusion policy using omegaconf
 
+        self.env_device = env_device
 
         # self.policy = policy
+        self.num_envs = num_envs
         self.device = self.policy.device
         self.policy_config = self.policy.config
+
+        self.segmentation_id_map = segmentation_id_map
+        segmentation_id_map = dict()
+        for key, value in self.segmentation_id_map.items():
+            entity_name = value.name
+            segmentation_id_map[entity_name] = key
         self.segmentation_id_map = segmentation_id_map
 
         self.action_dim = self.policy_config.policy_cfg.output_shapes['action'][0]
-        self.use_action_history = self.policy_config.use_action_history
+        self.action_plan_horizon = self.policy_config.policy_cfg.horizon
+        # self.use_action_history = self.policy_config.policy_cfg.use_action_history
+        self.use_action_history = "observation.action_history" in self.policy_config.policy_cfg.input_shapes
+
+        self.current_action_plan = None
         if self.use_action_history:
             self.action_history = torch.zeros(num_envs, self.policy_config.policy_cfg.action_history_encoder_config.history_length, self.action_dim, dtype=torch.float32).to(self.device)
             # keep gripper closed (-1)
@@ -91,25 +109,25 @@ class DiffusionPolicyManiskillWrapper:
         self.sim_control_freq = sim_control_freq
         self.replan_in_n_steps = self.sim_control_freq // self.policy_freq
 
-    def maniskill_obs_to_lerobot_obs(obs):
+    def maniskill_obs_to_lerobot_obs(self, obs):
         # TODO: actually implement sequence length handling. For now, we'll just hardcode it in here
         # images should be BxSxCxHxW
         lerobot_batch = {}
         # lerobot_batch['observation.image'] = torch.as_tensor(observations['pixels'], device=self.config.device).float().unsqueeze(0)
-        if self.config.observation_cfg.crop_input_config.enable:
+        if self.policy_config.observation_cfg.crop_input_config.enable:
             # lerobot_batch['observation.EE_pixel_coord'] = torch.as_tensor(observations['EE_pose_pxl'], device=device).float().unsqueeze(0) # becomes BxSx2
             lerobot_batch['observation.EE_pixel_coord'] = obs['extra']['end_effector_pixel_coord'].unsqueeze(1).to(self.device)
-        if self.config.observation_cfg.use_color or self.config.observation_cfg.crop_input_config.color_crop_type != None:
+        if self.policy_config.observation_cfg.use_color or self.policy_config.observation_cfg.crop_input_config.color_crop_type != None:
             # BXHXWX3
             lerobot_batch['observation.rgb'] = einops.rearrange(obs['sensor_data']['base_camera']['rgb'].float().unsqueeze(1), 'b s h w c -> b s c h w').to(self.device)
-        if self.config.observation_cfg.use_depth or self.config.observation_cfg.crop_input_config.depth_crop_type != None:
+        if self.policy_config.observation_cfg.use_depth or self.policy_config.observation_cfg.crop_input_config.depth_crop_type != None:
             # lerobot_batch['observation.depth'] = pixels[:, :, self.visual_feature_preprocessor.depth_channel_idxs] # BxSx1xHxW
             lerobot_batch['observation.depth'] = einops.rearrange(obs['sensor_data']['base_camera']['depth'].float().unsqueeze(1), 'b s h w c -> b s c h w').to(self.device)
-        if self.config.observation_cfg.mask_input_dict.enable or self.config.observation_cfg.crop_input_config.segmask_crop_type != None:
+        if self.policy_config.observation_cfg.mask_input_dict.enable or self.policy_config.observation_cfg.crop_input_config.segmask_crop_type != None:
             # lerobot_batch['observation.EE_obj_mask'] = pixels[:, :, self.visual_feature_preprocessor.segmask_channel_idxs]
             grasped_book_mask = self.extract_individual_segmentation_mask(obs['sensor_data']['base_camera']['segmentation'], self.segmentation_id_map, 'grasped_book_0')
             lerobot_batch['observation.EE_obj_mask'] = einops.rearrange(grasped_book_mask.float().unsqueeze(1), 'b s h w c -> b s c h w').to(self.device)
-        if self.config.observation_cfg.use_contact_feature:
+        if self.policy_config.observation_cfg.use_contact_feature:
             # lerobot_batch['observation.contact_map'] = pixels[:, :, self.visual_feature_preprocessor.contact_channel_idxs] # BxSx1xHxW
             # lerobot_batch['observation.env_dtc_map'] = pixels[:, :, self.visual_feature_preprocessor.env_dtc_channel_idxs] # BxSx1xHxW
             # lerobot_batch['observation.EE_dtc_map'] = pixels[:, :, self.visual_feature_preprocessor.grasped_dtc_channel_idxs] # BxSx1xHxW
@@ -131,10 +149,12 @@ class DiffusionPolicyManiskillWrapper:
     
     @staticmethod
     def extract_individual_segmentation_mask(segmentation_map, segmentation_id_map, id):
-        mask = (segmentation_map == id).float()
+        id_int = segmentation_id_map[id]
+        mask = (segmentation_map == id_int).float()
         assert len(mask.shape) == 4, f"mask should be BxHxWx1, but got {mask.shape}"
         assert mask.shape[-1] == 1, f"mask should be BxHxWx1, but got {mask.shape}"
-        return 
+        assert torch.max(mask) == 1, f"mask should be binary, but got {torch.max(mask)}"
+        return mask
 
     def reset(self):
         self.current_action_plan = None
@@ -146,17 +166,21 @@ class DiffusionPolicyManiskillWrapper:
     def act(self, maniskill_obs):
         if self.elapsed_steps % self.replan_in_n_steps == 0:
             lerobot_obs = self.maniskill_obs_to_lerobot_obs(maniskill_obs)
-            action_plan = self.policy.act(lerobot_obs) # BxTxA
+            action_plan, _ = self.policy.act(lerobot_obs) # BxTxA
+            # TODO: HACK to get back batch
+            action_plan = torch.from_numpy(action_plan).unsqueeze(0) # TxA
+            assert action_plan.shape == (self.num_envs, self.action_plan_horizon, self.action_dim), f"action_plan should be {(self.num_envs, self.action_plan_horizon, self.action_dim)}, but got {action_plan.shape}"
             self.current_action_plan = action_plan
         assert self.current_action_plan is not None, "current_action_plan is None"
         # get the action to be executed from the current_action_plan
         action_to_execute = self.current_action_plan[:, self.elapsed_steps % self.replan_in_n_steps]
         if self.use_action_history:
+            # TODO: FIX
             # THIS IS TECHNICALLY WRONG AS EXECUTED ACTIONS SHOULD BE FILLED INTO A QUEUE FROM THE RIGHT SIDE RATHER THAN FILL FROM LEFT
             # this only works for now because history length is exactly the same as the replan_in_n_steps
             self.action_history[:, self.elapsed_steps % self.replan_in_n_steps] = action_to_execute
         self.elapsed_steps += 1
-        return action_to_execute
+        return action_to_execute.to(self.env_device)
     
     def load_checkpoint_conf(self, snapshot_path):
         config_path = snapshot_path.parent / 'config.yaml'
@@ -189,6 +213,8 @@ class DiffusionPolicyManiskillWrapper:
                                 self.loading_compiled_checkpoint_with_no_compile = True
                         exec(f"{k.replace('root[', 'cfg[')} = {k.replace('root[', 'self.cfg[')}")
             # for any new values, update the old checkpoint config
+            # tmp hack! TODO: fix this
+            # cfg.suite.task_make_fn.agent_policy_cfg = cfg.agent.config
             if "dictionary_item_added" in diff:
                 for new_key in diff['dictionary_item_added']: # this is a list
                     # if new_key == "root['suite']['task_make_fn']['observation_cfg']":
@@ -196,6 +222,7 @@ class DiffusionPolicyManiskillWrapper:
                         # pass the agents observation_cfg to the suite task_make_fn
                         with open_dict(cfg): # to allow addition of non-existing keys
                             cfg.suite.task_make_fn.observation_cfg = cfg.agent.config.observation_cfg
+                            # cfg.suite.task_make_fn.agent_policy_cfg = cfg.agent.config
                         continue
                     elif "['agent']['config']['policy_cfg']['input_shapes']" in new_key:
                         # skip adding the new key if it is the input_shapes of the policy_cfg
@@ -222,13 +249,12 @@ class DiffusionPolicyManiskillWrapper:
             elif k == '_global_epoch':
                 self._global_epoch = v
                 print(f'loaded epoch: {v}')
-                if self.cfg.use_wandb:
-                    # add to config of wandb
-                    wandb.config.update({'epoch': v})
+                # if self.cfg.use_wandb:
+                #     # add to config of wandb
+                #     wandb.config.update({'epoch': v})
 
         self.policy.load_snapshot_eval(agent_payload, bc)
 #%%
-# spacemouse_input = SpacemouseInput()
 desired_viewing_size = (256, 256)
 
 #%%
@@ -277,11 +303,12 @@ base_camera_cam2world_gl = env.scene.sensors['base_camera'].get_params()['cam2wo
 base_camera_extrinsic_cv = env.scene.sensors['base_camera'].get_params()['extrinsic_cv'][0]
 #%%
 # make the policy
-diffusion_polcy = DiffusionPolicyManiskillWrapper(omegaconf_cfg, env.segmentation_id_map, env.sim_config.control_freq, env.num_envs)
+diffusion_policy = DiffusionPolicyManiskillWrapper(omegaconf_cfg, env.segmentation_id_map, env.sim_config.control_freq, env.num_envs, env.device.type)
 
 #%% 
 obs, info = env.reset(seed=seed)
-action = diffusion_polcy.act(obs)
+
+action = diffusion_policy.act(obs)
 #%%
 # frame = obs['sensor_data']['base_camera']['segmentation'][0].cpu().numpy()
 # frame = env.render_rgb_array()[0].cpu().numpy()
@@ -309,12 +336,11 @@ while True:
     start_time = time.perf_counter()
     while True:
         # action = env.action_space.sample()
-        # action = spacemouse_input.get_action()
         obs, reward, terminated, truncated, info = env.step(action)
 
         env.render_human()
 
-        action = diffusion_polcy.act(obs)
+        action = diffusion_policy.act(obs)
 
         # current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
         # current_frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
@@ -347,8 +373,8 @@ while True:
         elapsed_realtime = time.perf_counter() - start_time
         # time_to_sleep = sim_dt_bw_step - elapsed_time
         time_to_sleep = elapsed_simtime - elapsed_realtime
-        # if time_to_sleep > 0:
-        #     time.sleep(time_to_sleep)
+        if time_to_sleep > 0:
+            time.sleep(time_to_sleep)
         if elapsed_timesteps % 100 == 0:
             print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
             print(f"success: {info['success']} | success duration: {info['elapsed_success_duration']} | t. success: {info['transient_success']} | z_distance: {info['z_distance_bw_top_of_grasped_book_and_top_of_slot']}")
@@ -360,16 +386,15 @@ while True:
         seed += 1
         num_trajs += 1
         env.reset(seed=seed)
-        diffusion_polcy.reset()
-        action = diffusion_polcy.act(obs)
+        diffusion_policy.reset()
+        action = diffusion_policy.act(obs)
         viewer = env.render_human()
-        # spacemouse_input.reset()
         continue
     elif key == ord('r'):
         env.reset(seed=seed, options=dict(save_trajectory=False))
-        action = diffusion_polcy.act(obs)
+        diffusion_policy.reset()
+        action = diffusion_policy.act(obs)
         viewer = env.render_human()
-        # spacemouse_input.reset()
         continue
     else:
         break
@@ -382,7 +407,3 @@ cv2.destroyAllWindows()
 
 env.close()
 del env
-
-# spacemouse_input.close()
-
-# TODO: try adding contact map to extra states and the end effector pose (to get back observation.state)

@@ -139,7 +139,7 @@ while True:
         time_to_sleep = elapsed_simtime - elapsed_realtime
         if time_to_sleep > 0:
             time.sleep(time_to_sleep)
-        if elapsed_timesteps % 100 == 0:
+        if elapsed_timesteps % 50 == 0:
             print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
             print(f"success: {info['success']} | success duration: {info['elapsed_success_duration']} | t. success: {info['transient_success']} | z_distance: {info['z_distance_bw_top_of_grasped_book_and_top_of_slot']}")
     
