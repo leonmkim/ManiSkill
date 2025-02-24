@@ -191,7 +191,7 @@ class BookInsertionEnv(BaseEnv):
         pose = sapien_utils.look_at(eye, look_at)
 
         # return CameraConfig("render_camera", pose, 512, 512, 1, 0.01, 100)
-        return CameraConfig("render_camera", pose, 256, 256, 1, 0.01, 5.0)
+        return CameraConfig("render_camera", pose, 512, 512, 1, 0.01, 5.0)
 
     def _load_agent(self, options: dict):
         super()._load_agent(options, sapien.Pose(p=[-0.615, 0, 0]))

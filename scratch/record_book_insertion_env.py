@@ -24,12 +24,10 @@ import time
 
 from mani_skill.utils.teleoperation import SpacemouseInput
 #%%
-
-    
 spacemouse_input = SpacemouseInput()
 desired_viewing_size = (256, 256)
 output_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop")
-record_demonstrations = False
+record_demonstrations = True
 
 #%%
 ## testing book insertion task
@@ -39,7 +37,7 @@ env = gym.make(
     cam_resize_factor=0.5,
     reward_mode="none", 
     sim_backend='physx_cpu', 
-    # render_mode="rgb_array", 
+    render_mode="rgb_array", 
     # render_mode="sensors", 
     obs_mode="rgb+depth+segmentation",
     # obs_mode="none",
@@ -67,9 +65,11 @@ if record_demonstrations:
     env = RecordEpisodeZarr(
         env,
         output_dir=output_dir,
-        save_video=False,
+        save_video=True,
+        save_trajectory=False,
         info_on_video=False,
         record_reward=False,
+        video_fps=20,
         source_type="teleoperation",
         source_desc="teleoperation via spacemouse",
     )
@@ -175,12 +175,12 @@ while True:
             seed += 1
             num_trajs += 1
             env.reset(seed=seed)
-            viewer = env.render_human()
+            # viewer = env.render_human()
             spacemouse_input.reset()
             continue
         elif key == ord('r'):
             env.reset(seed=seed, options=dict(save_trajectory=False))
-            viewer = env.render_human()
+            # viewer = env.render_human()
             spacemouse_input.reset()
             continue
     else:

@@ -264,9 +264,11 @@ class RecordEpisodeZarr(gym.Wrapper):
         source_desc: Optional[str] = None,
         store_in_memory: bool = True,
         zarr_compression_level: int = 3,
+        eval_mode: bool = False,
     ) -> None:
         super().__init__(env)
-
+        self.current_env_seed = None
+        self.eval_mode = eval_mode
         self.output_dir = Path(output_dir)
         if save_trajectory or save_video:
             self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -280,7 +282,7 @@ class RecordEpisodeZarr(gym.Wrapper):
 
         self.save_video_trigger = save_video_trigger
 
-        # self._trajectory_buffer: Step = None
+        self._trajectory_buffer: Step = None
 
         self.max_steps_per_video = max_steps_per_video
         self.max_episode_steps = gym_utils.find_max_episode_steps_value(env)
@@ -312,7 +314,7 @@ class RecordEpisodeZarr(gym.Wrapper):
 
             self.zarr_compressor = blosc.Blosc(cname="zstd", clevel=zarr_compression_level, shuffle=1)
 
-            self._trajectory_buffer = None
+            # self._trajectory_buffer = None
 
             # Use a separate json to store non-array data
             self._json_path = self.filename.replace(".zarr", ".json")
@@ -545,6 +547,8 @@ class RecordEpisodeZarr(gym.Wrapper):
                         env_idxs_to_flush=common.to_numpy(options["env_idx"]),
                         save=options.get("save_trajectory", self.save_trajectory)
                     )
+        if self.eval_mode:
+            self.current_env_seed = seed
 
         obs, info = super().reset(*args, seed=seed, options=options, **kwargs)
         if info["reconfigure"]:
@@ -1105,7 +1109,11 @@ class RecordEpisodeZarr(gym.Wrapper):
         if save:
             self._video_id += 1
             if name is None:
-                video_name = "{}".format(self._video_id)
+                if self.eval_mode:
+                    # use the current env seed as the video name
+                    video_name = f"{self._video_id}_traj_{self.current_env_seed}_envseed"
+                else:
+                    video_name = "{}".format(self._video_id)
                 if suffix:
                     video_name += "_" + suffix
                 if self._avoid_overwriting_video:
