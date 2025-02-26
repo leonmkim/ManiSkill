@@ -27,7 +27,7 @@ from mani_skill.utils.teleoperation import SpacemouseInput
 spacemouse_input = SpacemouseInput()
 desired_viewing_size = (256, 256)
 output_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop")
-record_demonstrations = True
+record_demonstrations = False
 
 #%%
 ## testing book insertion task
@@ -39,6 +39,7 @@ env = gym.make(
     sim_backend='physx_cpu', 
     render_mode="rgb_array", 
     # render_mode="sensors", 
+    render_backend="gpu",
     obs_mode="rgb+depth+segmentation",
     # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
@@ -162,9 +163,9 @@ while True:
         elapsed_realtime = time.perf_counter() - start_time
         # time_to_sleep = sim_dt_bw_step - elapsed_time
         time_to_sleep = elapsed_simtime - elapsed_realtime
-        if time_to_sleep > 0:
-            time.sleep(time_to_sleep)
-        if elapsed_timesteps % 100 == 0:
+        # if time_to_sleep > 0:
+        #     time.sleep(time_to_sleep)
+        if elapsed_timesteps % 50 == 0:
             print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
     
     if record_demonstrations:
