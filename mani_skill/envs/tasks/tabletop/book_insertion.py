@@ -282,7 +282,8 @@ class BookInsertionEnv(BaseEnv):
                 grasped_book = builder.build(f"grasped_book_{i}")
                 self.remove_from_state_dict_registry(grasped_book)
                 grasped_books.append(grasped_book)
-
+            
+            self.non_merged_grasped_books_list = grasped_books
             self.grasped_book = Actor.merge(grasped_books, "grasped_book")
             self.add_to_state_dict_registry(self.grasped_book)
 
@@ -332,9 +333,11 @@ class BookInsertionEnv(BaseEnv):
             #     env_book_collision_group |= 1 << idx
 
             # want to make Nxb env books
-                
+            # create a copy of the env books list to keep track of the non-merged env books
+            self.non_merged_env_books_list = []
             for j in range(self.num_env_books):
                 envs_per_env_book = env_books[j]
+                self.non_merged_env_books_list.append(envs_per_env_book)
                 env_books[j] = Actor.merge(envs_per_env_book, f"book_{j}")
                 self.add_to_state_dict_registry(env_books[j])
             #     env_books[j].set_collision_group(group=2, value=env_book_collision_group)

@@ -1,0 +1,285 @@
+#%%
+import gymnasium as gym
+import mani_skill.envs
+import time
+from mani_skill.utils.wrappers import CPUGymWrapper
+import matplotlib.pyplot as plt
+import torch
+import tqdm
+import numpy as np
+from IPython.display import Video
+
+from mani_skill.trajectory.dataset import ManiSkillTrajectoryDataset
+from mani_skill.utils.io_utils import load_json
+from mani_skill.trajectory.utils import index_dict, dict_to_list_of_dicts
+from mani_skill.utils.visualization.misc import images_to_video
+from mani_skill.utils.wrappers.record import RecordEpisode
+from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
+
+import zarr
+from pathlib import Path
+
+import cv2
+
+import time
+import json
+
+import trimesh as tm
+
+from PIL import Image
+import io
+#%%
+import sys, os
+# add contact_estimation to the path
+path_to_this_file = Path(os.path.abspath(__file__))
+path_to_contact_estimation = path_to_this_file.parents[2] / "contact_estimation"
+sys.path.append(str(path_to_contact_estimation))
+from src.dataset.gazebo_to_trimesh import create_trimesh_camera, get_min_sdf_along_ray, generate_rays_from_camera, get_ray_intersections, generate_min_distances_image, normals_to_xyz_map, get_surface_normals_in_world_frame, transform_world_frame_surface_normals_to_camera_frame, get_ray_directions_map, get_min_grasped_obj_sdf_at_env_hits_data, get_min_env_sdf_at_grasped_obj_hits_data
+#%%
+desired_viewing_size = (256, 256)
+path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/413_sim_demos_left_of_4th_book_20hz_act")
+path_to_zarr = path_to_demo_root_dir / "demos.zarr"
+path_to_json = path_to_demo_root_dir / "demos.json"
+
+snap_to_env_state = False
+#%%
+zarr_store = zarr.open(str(path_to_zarr), mode='r')
+with open(path_to_json, 'r') as f:
+    json_data = json.load(f)
+#%%
+
+## testing book insertion task
+env = gym.make(
+    # "LiftPegUpright-v1", 
+    "BookInsertion-v0", 
+    cam_resize_factor=0.5,
+    reward_mode="none", 
+    sim_backend='physx_cpu', 
+    render_mode="rgb_array", 
+    # render_mode="sensors", 
+    render_backend="gpu",
+    obs_mode="rgb+depth+segmentation",
+    # obs_mode="none",
+    control_mode="pd_ee_target_delta_pose",
+    # control_mode="pd_ee_delta_pose",
+    sim_config=dict(
+        sim_freq=100, # default 100
+        control_freq=20, # default 20
+        scene_config=dict(
+            solver_position_iterations=15, # 15 is the default
+            contact_offset=0.02, # 0.02 is the default
+            # contact_offset=0.02, # 0.02 is the default
+            cpu_workers=0, # 0 is the default
+        )
+    ),
+    viewer_camera_configs=dict(
+        shader_pack="minimal"
+    ),
+    human_render_camera_configs=dict(
+        shader_pack="minimal"
+    )
+)
+#%%
+
+sim_dt = 1.0 / env.sim_config.sim_freq
+sim_dt_bw_step = sim_dt * (env.sim_config.sim_freq / env.sim_config.control_freq)
+
+human_render_cam_params = env.scene.human_render_cameras['render_camera'].get_params()
+human_render_cam_intrisic = human_render_cam_params['intrinsic_cv'][0]
+human_render_cam_cam2world_gl = human_render_cam_params['cam2world_gl'][0][:3, :4]
+human_render_cam_extrinsic_cv = human_render_cam_params['extrinsic_cv'][0]
+#%%
+base_camera_cam2world_gl = env.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
+base_camera_extrinsic_cv = env.scene.sensors['base_camera'].get_params()['extrinsic_cv'][0]
+# add row of [0, 0, 0, 1] to make it 4x4
+base_camera_extrinsic_cv = torch.cat([base_camera_extrinsic_cv, torch.tensor([[0, 0, 0, 1]], dtype=torch.float32)], dim=0)
+base_camera_intrinsic_cv = env.scene.sensors['base_camera'].get_params()['intrinsic_cv'][0]
+
+# cv2.namedWindow("frame", cv2.WINDOW_AUTOSIZE)
+#%%
+# for episode_dict in json_data['episodes']:
+episode_dict = json_data['episodes'][0]
+episode_idx = episode_dict['episode_id']
+seed = episode_dict['episode_seed']
+num_steps = episode_dict['elapsed_steps']
+episode_start_idx = 0 if episode_idx == 0 else zarr_store.meta.episode_ends[episode_idx - 1]
+episode_end_idx = zarr_store.meta.episode_ends[episode_idx]
+assert episode_end_idx - episode_start_idx == num_steps, f"mismatch in episode steps: {episode_end_idx - episode_start_idx} vs {num_steps}"
+#%%
+obs, info = env.reset(seed=seed)
+#%%
+import sapien
+# make a book using the sizes and poses from the env
+length, width, height = env.grasped_book_sizes[0].tolist()
+binding_thickness = env.binding_thickness
+cover_thickness = env.cover_thickness
+cover_overhang = env.cover_overhang
+pages_length = length - cover_overhang - binding_thickness
+pages_width = width - 2*cover_thickness
+pages_height = height - 2*cover_overhang
+full_sizes = [
+    [pages_length, pages_width, pages_height], # pages
+    [binding_thickness*2, width, height], # binding
+    [length, cover_thickness, height], # cover
+    [length, cover_thickness, height], # cover
+]
+poses = [
+    sapien.Pose([(binding_thickness - cover_overhang)/2, 0, 0]).to_transformation_matrix(), # pages
+    sapien.Pose([(binding_thickness - length)/2, 0, 0]).to_transformation_matrix(), # binding
+    sapien.Pose([0, (pages_width + cover_thickness)/2, 0]).to_transformation_matrix(), # cover
+    sapien.Pose([0, -(pages_width + cover_thickness)/2, 0]).to_transformation_matrix(), # cover
+]
+#%%
+book_geometries = []
+for i, (full_size, pose) in enumerate(zip(full_sizes, poses)):
+    # builder.add_box_collision(pose, half_size, density=density)
+    object_geometry = tm.primitives.Box(extents=full_size)
+    object_geometry.apply_transform(pose)
+    book_geometries.append(object_geometry)
+book_mesh = tm.util.concatenate(book_geometries)
+
+#%%
+book_mesh.show()
+#%%
+
+EE_object_mesh = env.non_merged_grasped_books_list[0].get_collision_meshes()[0]
+#%%
+EE_object_mesh.show()
+#%%
+env_object_meshes = []
+for env_book_over_envs in env.non_merged_env_books_list:
+    env_object_mesh = env_book_over_envs[0].get_collision_meshes()
+    env_object_meshes.extend(env_object_mesh)
+table_mesh = env.table_scene.table.get_collision_meshes()
+env_mesh = tm.util.concatenate(env_object_meshes + table_mesh)
+tm_camera = create_trimesh_camera(base_camera_intrinsic_cv, base_camera_cam2world_gl)
+#%%
+ray_origins, ray_directions, pixels_uv = generate_rays_from_camera(tm_camera)
+env_hit_min_locations, env_hit_min_pixels_uv, env_hit_min_distances, env_hit_min_index_tri, env_hit_min_ray_directions = get_min_grasped_obj_sdf_at_env_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh, EE_object_mesh)
+EE_obj_sdf_on_env_image, EE_obj_sdf_on_env_mask = generate_min_distances_image(env_hit_min_pixels_uv, env_hit_min_distances, tm_camera.resolution[::-1])
+EE_obj_sdf_on_env_image = EE_obj_sdf_on_env_image.astype(np.float32)
+EE_obj_sdf_on_env_mask = EE_obj_sdf_on_env_mask.astype(bool)
+#%%
+# add the meshes to a trimesh scene
+scene = tm.Scene(base_frame='world', camera=tm_camera, camera_transform=tm_camera.transform)
+scene.add_geometry(env_mesh, parent_node_name='world')
+scene.add_geometry(EE_object_mesh, parent_node_name='world')
+scene_img = scene.save_image(resolution=(320, 240))
+
+scene_img = np.array(Image.open(io.BytesIO(scene_img)))
+plt.imshow(scene_img)
+# scene.show()
+#%%
+num_random_action_steps = 50
+for i in range(num_random_action_steps):
+    action = env.action_space.sample()
+    obs, reward, terminated, truncated, info = env.step(action)
+#%%
+EE_object_mesh = env.non_merged_grasped_books_list[0].get_collision_meshes()
+env_object_meshes = []
+for env_book_over_envs in env.non_merged_env_books_list:
+    env_object_mesh = env_book_over_envs[0].get_collision_meshes()
+    env_object_meshes.extend(env_object_mesh)
+table_mesh = env.table_scene.table.get_collision_meshes()
+env_mesh = tm.util.concatenate(env_object_meshes + table_mesh)
+#%%
+
+
+frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
+# frame = (frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
+# frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
+# frame = cv2.cvtColor(env.render()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
+# recorded_frame = zarr_store.data['observation.rgb'][episode_start_idx]
+recorded_frame = zarr_store.data.gt_segmentation['observation.EE_obj_mask'][episode_start_idx]
+# max_segmentation_id = recorded_frame.max()
+# recorded_frame = (recorded_frame / max_segmentation_id * 255).astype(np.uint8)
+
+# frame = (frame*0.5 + recorded_frame*0.5).astype(np.uint8)
+frame = (frame*recorded_frame).astype(np.uint8)
+
+# frame = cv2.resize(frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
+cv2.imshow("frame", frame)
+# plt.imshow(frame)
+
+# viewer = env.render_human()
+# viewer.paused = True
+#%%
+# frames = [env.render_rgb_array()[0].cpu().numpy()]
+# for i in tqdm.tqdm(range(500)):
+start_time = time.perf_counter()
+# while True:
+for i in range(num_steps):
+    # action = env.action_space.sample()
+    action = zarr_store.data.action[episode_start_idx + i]
+    obs, reward, terminated, truncated, info = env.step(action)
+
+    # env.render_human()
+
+    # current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
+    current_frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
+    # current_frame = obs['sensor_data']['base_camera']['Color'][0][:,:,:3].cpu().numpy()
+    # recorded_frame = zarr_store.data['observation.rgb'][min(episode_start_idx + i + 1, episode_end_idx - 1)]
+    recorded_frame = zarr_store.data.gt_segmentation['observation.EE_obj_mask'][min(episode_start_idx + i + 1, episode_end_idx - 1)]
+    # recorded_frame = (recorded_frame / max_segmentation_id * 255).astype(np.uint8)
+    # current_frame = (current_frame*0.5 + recorded_frame*0.5).astype(np.uint8)
+    current_frame = (current_frame*recorded_frame).astype(np.uint8)
+    # current_frame = (current_frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
+    # current_frame = cv2.resize(current_frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
+
+    cv2.imshow("frame", current_frame)
+    # plt.imshow(current_frame)
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q') or key == ord('c') or key == ord('r'):
+        break
+    
+    # if viewer.window.key_press('q'):
+    #     # q: quit the script and stop collecting data. Save trajectories and optionally videos.
+    #     # c: stop this episode and record the trajectory and move on to a new episode
+    #     # r: restart
+    #     key = ord('q')
+    #     break
+    # elif viewer.window.key_press('c'): 
+    #     key = ord('c')
+    #     break
+    # elif viewer.window.key_press('r'):
+    #     key = ord('r')
+    #     break
+
+    # frames.append(current_frame)
+    elapsed_timesteps = info["elapsed_steps"].item()
+    elapsed_simtime = elapsed_timesteps * sim_dt_bw_step
+    elapsed_realtime = time.perf_counter() - start_time
+    # time_to_sleep = sim_dt_bw_step - elapsed_time
+    time_to_sleep = elapsed_simtime - elapsed_realtime
+    # if time_to_sleep > 0:
+    #     time.sleep(time_to_sleep)
+    if elapsed_timesteps % 50 == 0:
+        print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
+#%%
+if key == ord('q'):
+    break
+elif key == ord('c'):
+    # seed += 1
+    # num_trajs += 1
+    # env.reset(seed=seed)
+    # # viewer = env.render_human()
+    # spacemouse_input.reset()
+    continue
+# elif key == ord('r'):
+    # env.reset(seed=seed, options=dict(save_trajectory=False))
+    # # viewer = env.render_human()
+    # spacemouse_input.reset()
+    # continue
+# else:
+#     break
+
+cv2.destroyAllWindows()
+#%%
+# if record_demonstrations:
+#     h5_file_path = env._h5_file.copy
+#     json_file_path = env._json_path
+
+env.close()
+del env
+
+# TODO: try adding contact map to extra states and the end effector pose (to get back observation.state)
