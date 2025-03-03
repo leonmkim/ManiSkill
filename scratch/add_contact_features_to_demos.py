@@ -24,6 +24,8 @@ import cv2
 import time
 import json
 
+import sapien
+
 import trimesh as tm
 
 from PIL import Image
@@ -35,6 +37,47 @@ path_to_this_file = Path(os.path.abspath(__file__))
 path_to_contact_estimation = path_to_this_file.parents[2] / "contact_estimation"
 sys.path.append(str(path_to_contact_estimation))
 from src.dataset.gazebo_to_trimesh import create_trimesh_camera, get_min_sdf_along_ray, generate_rays_from_camera, get_ray_intersections, generate_min_distances_image, normals_to_xyz_map, get_surface_normals_in_world_frame, transform_world_frame_surface_normals_to_camera_frame, get_ray_directions_map, get_min_grasped_obj_sdf_at_env_hits_data, get_min_env_sdf_at_grasped_obj_hits_data
+def get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=None):
+    pages_length = length - cover_overhang - binding_thickness
+    pages_width = width - 2*cover_thickness
+    pages_height = height - 2*cover_overhang
+    full_sizes = [
+        [pages_length, pages_width, pages_height], # pages
+        [binding_thickness*2, width, height], # binding
+        [length, cover_thickness, height], # cover
+        [length, cover_thickness, height], # cover
+    ]
+    poses = [
+        sapien.Pose([(binding_thickness - cover_overhang)/2, 0, 0]).to_transformation_matrix(), # pages
+        sapien.Pose([(binding_thickness - length)/2, 0, 0]).to_transformation_matrix(), # binding
+        sapien.Pose([0, (pages_width + cover_thickness)/2, 0]).to_transformation_matrix(), # cover
+        sapien.Pose([0, -(pages_width + cover_thickness)/2, 0]).to_transformation_matrix(), # cover
+    ]
+    book_geometries = []
+    for i, (full_size, pose) in enumerate(zip(full_sizes, poses)):
+        # builder.add_box_collision(pose, half_size, density=density)
+        object_geometry = tm.primitives.Box(extents=full_size)
+        object_geometry.apply_transform(pose)
+        if global_transform is not None:
+            object_geometry.apply_transform(global_transform)
+        book_geometries.append(object_geometry)
+
+    return book_geometries
+from scipy.spatial.transform import Rotation as R
+def convert_sapien_pose_to_transform_matrix(sapien_pose):
+    position, quaternion = sapien_pose.p, sapien_pose.q
+    if len(position.shape) == 2:
+        position = position[0]
+    if len(quaternion.shape) == 2:
+        quaternion = quaternion[0]
+    if isinstance(position, torch.Tensor):
+        position = position.cpu().numpy()
+    if isinstance(quaternion, torch.Tensor):
+        quaternion = quaternion.cpu().numpy()
+    transform_matrix = np.eye(4)
+    transform_matrix[:3, :3] = R.from_quat(quaternion, scalar_first=True).as_matrix()
+    transform_matrix[:3, 3] = position
+    return transform_matrix
 #%%
 desired_viewing_size = (256, 256)
 path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/413_sim_demos_left_of_4th_book_20hz_act")
@@ -94,7 +137,7 @@ base_camera_extrinsic_cv = env.scene.sensors['base_camera'].get_params()['extrin
 # add row of [0, 0, 0, 1] to make it 4x4
 base_camera_extrinsic_cv = torch.cat([base_camera_extrinsic_cv, torch.tensor([[0, 0, 0, 1]], dtype=torch.float32)], dim=0)
 base_camera_intrinsic_cv = env.scene.sensors['base_camera'].get_params()['intrinsic_cv'][0]
-
+world_tf_cam = convert_sapien_pose_to_transform_matrix(env.world_tf_cam)
 # cv2.namedWindow("frame", cv2.WINDOW_AUTOSIZE)
 #%%
 # for episode_dict in json_data['episodes']:
@@ -107,83 +150,124 @@ episode_end_idx = zarr_store.meta.episode_ends[episode_idx]
 assert episode_end_idx - episode_start_idx == num_steps, f"mismatch in episode steps: {episode_end_idx - episode_start_idx} vs {num_steps}"
 #%%
 obs, info = env.reset(seed=seed)
+plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy())
 #%%
-import sapien
+# corrected_cam_rot = torch.tensor(R.from_quat(env.cam_rot, scalar_first=True).as_matrix())
+# base_camera_cam2world_gl[:3, :3] = corrected_cam_rot
+#%%
 # make a book using the sizes and poses from the env
+
+# EE_object_mesh = env.non_merged_grasped_books_list[0].get_collision_meshes()[0]
+# EE_object_transform = env.non_merged_grasped_books_list[0].pose
 length, width, height = env.grasped_book_sizes[0].tolist()
 binding_thickness = env.binding_thickness
 cover_thickness = env.cover_thickness
 cover_overhang = env.cover_overhang
-pages_length = length - cover_overhang - binding_thickness
-pages_width = width - 2*cover_thickness
-pages_height = height - 2*cover_overhang
-full_sizes = [
-    [pages_length, pages_width, pages_height], # pages
-    [binding_thickness*2, width, height], # binding
-    [length, cover_thickness, height], # cover
-    [length, cover_thickness, height], # cover
-]
-poses = [
-    sapien.Pose([(binding_thickness - cover_overhang)/2, 0, 0]).to_transformation_matrix(), # pages
-    sapien.Pose([(binding_thickness - length)/2, 0, 0]).to_transformation_matrix(), # binding
-    sapien.Pose([0, (pages_width + cover_thickness)/2, 0]).to_transformation_matrix(), # cover
-    sapien.Pose([0, -(pages_width + cover_thickness)/2, 0]).to_transformation_matrix(), # cover
-]
-#%%
-book_geometries = []
-for i, (full_size, pose) in enumerate(zip(full_sizes, poses)):
-    # builder.add_box_collision(pose, half_size, density=density)
-    object_geometry = tm.primitives.Box(extents=full_size)
-    object_geometry.apply_transform(pose)
-    book_geometries.append(object_geometry)
-book_mesh = tm.util.concatenate(book_geometries)
 
+EE_object_transform = convert_sapien_pose_to_transform_matrix(env.non_merged_grasped_books_list[0].pose)
+tm.transformations.is_rigid(EE_object_transform)
+EE_object_mesh_list = get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=EE_object_transform)
+EE_object_mesh = tm.util.concatenate(EE_object_mesh_list)
 #%%
-book_mesh.show()
+# env_object_meshes = []
+env_object_meshes_list = []
+for i, env_book_over_envs in enumerate(env.non_merged_env_books_list):
+    # env_object_mesh = env_book_over_envs[0].get_collision_meshes()
+    # env_object_meshes.extend(env_object_mesh)
+    length, width, height = env.env_book_sizes[0,i].tolist()
+    env_object_transform = convert_sapien_pose_to_transform_matrix(env_book_over_envs[0].pose)
+    env_object_mesh = get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=env_object_transform)
+    env_object_meshes_list.extend(env_object_mesh)
 #%%
-
-EE_object_mesh = env.non_merged_grasped_books_list[0].get_collision_meshes()[0]
-#%%
-EE_object_mesh.show()
-#%%
-env_object_meshes = []
-for env_book_over_envs in env.non_merged_env_books_list:
-    env_object_mesh = env_book_over_envs[0].get_collision_meshes()
-    env_object_meshes.extend(env_object_mesh)
-table_mesh = env.table_scene.table.get_collision_meshes()
-env_mesh = tm.util.concatenate(env_object_meshes + table_mesh)
+# table_mesh = env.table_scene.table.get_collision_meshes()
+table_length, table_width, table_height = env.table_scene.table_length, env.table_scene.table_width, env.table_scene.table_height
+table_pose = convert_sapien_pose_to_transform_matrix(env.table_scene.table.pose)
+# add table box height to z
+table_box_offset_pose = np.eye(4)
+table_box_offset_pose[2, 3] = table_height/2
+table_mesh = tm.primitives.Box(extents=[table_length, table_width, table_height], transform=table_box_offset_pose)
+table_mesh.apply_transform(table_pose)
+env_mesh = tm.util.concatenate(env_object_meshes_list + [table_mesh])
+env_mesh_list = env_object_meshes_list + [table_mesh]
+# try snapping intrinsic to proper resolution
+base_camera_intrinsic_cv[:2, 2] = torch.tensor([160, 120], dtype=torch.float32)
+# fiddle with focal length
+base_camera_intrinsic_cv[:2, :2] *= 0.95
+# tm_camera = create_trimesh_camera(base_camera_intrinsic_cv, base_camera_cam2world_gl)
 tm_camera = create_trimesh_camera(base_camera_intrinsic_cv, base_camera_cam2world_gl)
-#%%
-ray_origins, ray_directions, pixels_uv = generate_rays_from_camera(tm_camera)
-env_hit_min_locations, env_hit_min_pixels_uv, env_hit_min_distances, env_hit_min_index_tri, env_hit_min_ray_directions = get_min_grasped_obj_sdf_at_env_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh, EE_object_mesh)
-EE_obj_sdf_on_env_image, EE_obj_sdf_on_env_mask = generate_min_distances_image(env_hit_min_pixels_uv, env_hit_min_distances, tm_camera.resolution[::-1])
-EE_obj_sdf_on_env_image = EE_obj_sdf_on_env_image.astype(np.float32)
-EE_obj_sdf_on_env_mask = EE_obj_sdf_on_env_mask.astype(bool)
+
 #%%
 # add the meshes to a trimesh scene
 scene = tm.Scene(base_frame='world', camera=tm_camera, camera_transform=tm_camera.transform)
+# scene.add_geometry(table_mesh, parent_node_name='world')
 scene.add_geometry(env_mesh, parent_node_name='world')
 scene.add_geometry(EE_object_mesh, parent_node_name='world')
 scene_img = scene.save_image(resolution=(320, 240))
 
 scene_img = np.array(Image.open(io.BytesIO(scene_img)))
-plt.imshow(scene_img)
-# scene.show()
 #%%
-num_random_action_steps = 50
-for i in range(num_random_action_steps):
-    action = env.action_space.sample()
-    obs, reward, terminated, truncated, info = env.step(action)
+plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
+plt.imshow(scene_img, alpha=0.5)
+# scene.show(viewer='gl')
 #%%
-EE_object_mesh = env.non_merged_grasped_books_list[0].get_collision_meshes()
-env_object_meshes = []
-for env_book_over_envs in env.non_merged_env_books_list:
-    env_object_mesh = env_book_over_envs[0].get_collision_meshes()
-    env_object_meshes.extend(env_object_mesh)
-table_mesh = env.table_scene.table.get_collision_meshes()
-env_mesh = tm.util.concatenate(env_object_meshes + table_mesh)
+ray_origins, ray_directions, pixels_uv = generate_rays_from_camera(tm_camera)
+env_hit_min_locations, env_hit_min_pixels_uv, env_hit_min_distances, env_hit_min_index_tri, env_hit_min_ray_directions = get_min_grasped_obj_sdf_at_env_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh, EE_object_mesh_list)
+EE_obj_sdf_on_env_image, EE_obj_sdf_on_env_mask = generate_min_distances_image(env_hit_min_pixels_uv, env_hit_min_distances, tm_camera.resolution[::-1])
+EE_obj_sdf_on_env_image = EE_obj_sdf_on_env_image.astype(np.float32)
+EE_obj_sdf_on_env_mask = EE_obj_sdf_on_env_mask.astype(bool)
+# plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
+plt.imshow(EE_obj_sdf_on_env_image, alpha=0.7)
+plt.imshow(scene_img, alpha=0.3)
 #%%
+EE_obj_hit_min_locations, EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, EE_obj_hit_min_index_tri, EE_obj_hit_min_ray_directions = get_min_env_sdf_at_grasped_obj_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh_list, EE_object_mesh)
+env_sdf_on_EE_obj_image, env_sdf_on_EE_obj_mask = generate_min_distances_image(EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, tm_camera.resolution[::-1])
+env_sdf_on_EE_obj_image = env_sdf_on_EE_obj_image.astype(np.float32)
+env_sdf_on_EE_obj_mask = env_sdf_on_EE_obj_mask.astype(bool)
+plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
+plt.imshow(env_sdf_on_EE_obj_mask, alpha=0.5)
+#%%
+min_EE_object_surface_normals = EE_object_mesh.face_normals[EE_obj_hit_min_index_tri] # these are normalized already
+EE_object_xyz_normals_image, EE_object_xyz_normals_image_mask = normals_to_xyz_map(min_EE_object_surface_normals, tm_camera.resolution[::-1], EE_obj_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
+plt.imshow(EE_object_xyz_normals_image)
+#%%
+min_env_surface_normals = env_mesh.face_normals[env_hit_min_index_tri]
+env_xyz_normals_image, env_xyz_normals_image_mask = normals_to_xyz_map(min_env_surface_normals, tm_camera.resolution[::-1], env_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
+plt.imshow(env_xyz_normals_image)
+#%%
+# EE_object_mesh_list = env.non_merged_grasped_books_list[0].get_collision_meshes()
+# env_object_meshes = []
+# for env_book_over_envs in env.non_merged_env_books_list:
+#     env_object_mesh = env_book_over_envs[0].get_collision_meshes()
+#     env_object_meshes.extend(env_object_mesh)
+# table_mesh = env.table_scene.table.get_collision_meshes()
+# env_mesh = tm.util.concatenate(env_object_meshes + table_mesh)
+length, width, height = env.grasped_book_sizes[0].tolist()
+binding_thickness = env.binding_thickness
+cover_thickness = env.cover_thickness
+cover_overhang = env.cover_overhang
 
+EE_object_transform = convert_sapien_pose_to_transform_matrix(env.non_merged_grasped_books_list[0].pose)
+EE_object_mesh_list = get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=EE_object_transform)
+EE_object_mesh = tm.util.concatenate(EE_object_mesh_list)
+env_object_meshes_list = []
+for i, env_book_over_envs in enumerate(env.non_merged_env_books_list):
+    # env_object_mesh = env_book_over_envs[0].get_collision_meshes()
+    # env_object_meshes.extend(env_object_mesh)
+    length, width, height = env.env_book_sizes[0,i].tolist()
+    env_object_transform = convert_sapien_pose_to_transform_matrix(env_book_over_envs[0].pose)
+    env_object_mesh = get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=env_object_transform)
+    env_object_meshes_list.extend(env_object_mesh)
+env_mesh = tm.util.concatenate(env_object_meshes_list + table_mesh)
+#%%
+# scene = tm.Scene(base_frame='world', camera=tm_camera, camera_transform=tm_camera.transform)
+# scene.add_geometry(env_mesh, parent_node_name='world')
+# scene.add_geometry(EE_object_mesh, parent_node_name='world')
+# scene_img = scene.save_image(resolution=(320, 240))
+
+# scene_img = np.array(Image.open(io.BytesIO(scene_img)))
+# plt.imshow(scene_img)
+
+#%%
 
 frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
 # frame = (frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)

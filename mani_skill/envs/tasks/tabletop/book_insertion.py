@@ -144,11 +144,11 @@ class BookInsertionEnv(BaseEnv):
         # pose = sapien_utils.look_at([0, -0.3, 0.2], [0, 0, 0.1])
         self.camera_width = 640
         self.camera_height = 480
-        intrinsics = torch.tensor([[596.61175537,0.,323.86328125],
+        self.intrinsics = torch.tensor([[596.61175537,0.,323.86328125],
                                 [0.,596.96472168,246.78981018],
                                 [0.,0.,1.]])
         if self.cam_resize_factor != 1.0:
-            intrinsics[:2, :3] *= self.cam_resize_factor
+            self.intrinsics[:2, :3] *= self.cam_resize_factor
             self.camera_width = int(self.camera_width * self.cam_resize_factor)
             self.camera_height = int(self.camera_height * self.cam_resize_factor)
         
@@ -178,9 +178,9 @@ class BookInsertionEnv(BaseEnv):
 
         look_at = world_tf_root.raw_pose[0,:3] + torch.tensor([0.,0,0.25])
         eye = torch.tensor([1.05775+.615, 0, 0.375615])
-        world_tf_cam = sapien_utils.look_at(eye, look_at)
+        self.world_tf_cam = sapien_utils.look_at(eye, look_at)
 
-        return [CameraConfig("base_camera", world_tf_cam, width=self.camera_width, height=self.camera_height, intrinsic=intrinsics, near=0.01, far=5.0)]
+        return [CameraConfig("base_camera", self.world_tf_cam, width=self.camera_width, height=self.camera_height, intrinsic=self.intrinsics, near=0.01, far=5.0)]
 
     @property
     def _default_human_render_camera_configs(self):
@@ -417,8 +417,8 @@ class BookInsertionEnv(BaseEnv):
             # target_EE_pose = self.agent.controller.get_state()['arm']['target_pose']
             self.target_EE_pose.set_pose(end_effector_pose)
 
-            # camera_pose = self.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
-            # cam_rot = quaternion_multiply(matrix_to_quaternion(camera_pose[:3, :3]), axis_angle_to_quaternion(torch.tensor([np.pi, 0, 0])))
+            camera_pose = self.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
+            self.cam_rot = quaternion_multiply(matrix_to_quaternion(camera_pose[:3, :3]), axis_angle_to_quaternion(torch.tensor([np.pi, 0, 0])))
             # self.camera_pose.set_pose(Pose.create_from_pq(p=camera_pose[:3, 3], q=cam_rot))
 
             self.base_camera_intrinsic = self.scene.sensors['base_camera'].get_params()['intrinsic_cv']
