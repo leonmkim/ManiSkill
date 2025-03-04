@@ -46,4 +46,5 @@ imgui.ini
 htmlcov/
 
 scratch/*.mp4
+scratch/demos/*
 scratch/cfgs/*
