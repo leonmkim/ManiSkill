@@ -32,73 +32,16 @@ import io
 # np.set_printoptions(linewidth=np.inf)
 
 import tqdm
+
+from mani_skill.envs.tasks.tabletop.book_insertion import get_book_primitive_mesh_list, convert_sapien_pose_to_transform_matrix, get_table_primitive_mesh_list, get_env_object_meshes_list
 #%%
 import sys, os
 # add contact_estimation to the path
 path_to_this_file = Path(os.path.abspath(__file__))
 path_to_contact_estimation = path_to_this_file.parents[2] / "contact_estimation"
 sys.path.append(str(path_to_contact_estimation))
-from src.dataset.gazebo_to_trimesh import create_trimesh_camera, get_min_sdf_along_ray, generate_rays_from_camera, get_ray_intersections, generate_min_distances_image, normals_to_xyz_map, get_surface_normals_in_world_frame, transform_world_frame_surface_normals_to_camera_frame, get_ray_directions_map, get_min_grasped_obj_sdf_at_env_hits_data, get_min_env_sdf_at_grasped_obj_hits_data, camera_marker_transformed
-from scipy.spatial.transform import Rotation as R
+from src.dataset.gazebo_to_trimesh import create_trimesh_camera, generate_rays_from_camera, generate_min_distances_image, normals_to_xyz_map, get_min_grasped_obj_sdf_at_env_hits_data, get_min_env_sdf_at_grasped_obj_hits_data, camera_marker_transformed
 
-def get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=None):
-    pages_length = length - cover_overhang - binding_thickness
-    pages_width = width - 2*cover_thickness
-    pages_height = height - 2*cover_overhang
-    full_sizes = [
-        [pages_length, pages_width, pages_height], # pages
-        [binding_thickness*2, width, height], # binding
-        [length, cover_thickness, height], # cover
-        [length, cover_thickness, height], # cover
-    ]
-    poses = [
-        sapien.Pose([(binding_thickness - cover_overhang)/2, 0, 0]).to_transformation_matrix(), # pages
-        sapien.Pose([(binding_thickness - length)/2, 0, 0]).to_transformation_matrix(), # binding
-        sapien.Pose([0, (pages_width + cover_thickness)/2, 0]).to_transformation_matrix(), # cover
-        sapien.Pose([0, -(pages_width + cover_thickness)/2, 0]).to_transformation_matrix(), # cover
-    ]
-    book_geometries = []
-    for i, (full_size, pose) in enumerate(zip(full_sizes, poses)):
-        # builder.add_box_collision(pose, half_size, density=density)
-        object_geometry = tm.primitives.Box(extents=full_size)
-        object_geometry.apply_transform(pose)
-        if global_transform is not None:
-            object_geometry.apply_transform(global_transform)
-        book_geometries.append(object_geometry)
-
-    return book_geometries
-def convert_sapien_pose_to_transform_matrix(sapien_pose):
-    position, quaternion = sapien_pose.p, sapien_pose.q
-    if len(position.shape) == 2:
-        position = position[0]
-    if len(quaternion.shape) == 2:
-        quaternion = quaternion[0]
-    if isinstance(position, torch.Tensor):
-        position = position.cpu().numpy()
-    if isinstance(quaternion, torch.Tensor):
-        quaternion = quaternion.cpu().numpy()
-    transform_matrix = np.eye(4)
-    transform_matrix[:3, :3] = R.from_quat(quaternion, scalar_first=True).as_matrix()
-    transform_matrix[:3, 3] = position
-    return transform_matrix
-def get_table_primitive_mesh_list(length, width, height, global_transform=None):
-    table_box_offset_pose = np.eye(4)
-    table_box_offset_pose[2, 3] = height/2
-    table_mesh = tm.primitives.Box(extents=[length, width, height], transform=table_box_offset_pose)
-    if global_transform is not None:
-        table_mesh.apply_transform(global_transform)
-    return [table_mesh]
-def get_env_object_meshes_list(env, binding_thickness, cover_thickness, cover_overhang):
-    env_object_meshes_list = []
-    for i, env_book_over_envs in enumerate(env.non_merged_env_books_list):
-        # env_object_mesh = env_book_over_envs[0].get_collision_meshes()
-        # env_object_meshes_list.extend(env_object_mesh)
-        
-        length, width, height = env.env_book_sizes[0,i].tolist()
-        env_object_transform = convert_sapien_pose_to_transform_matrix(env_book_over_envs[0].pose)
-        env_object_mesh = get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=env_object_transform)
-        env_object_meshes_list.extend(env_object_mesh)
-    return env_object_meshes_list
 def construct_env_state_dict(zarr_data, index):
     env_state_dict = dict()
     env_state_dict['actors'] = dict()
@@ -153,14 +96,14 @@ compressor = zarr_store.data['observation.rgb'].compressor
 image_shape = zarr_store.data['observation.rgb'].shape[1:3]
 zarr_gt_contact = zarr_store.data.gt_contact
 if record_contact_features:
-    # if 'observation.EE_dtc_map' not in zarr_gt_contact:
-    zarr_gt_contact.create_dataset('observation.EE_dtc_map', shape=(0,) + image_shape + (1,), chunks=(1,) + image_shape + (1,), dtype=np.float32, compressor=compressor, overwrite=True)
-    # if 'observation.EE_normals_map' not in zarr_gt_contact:
-    zarr_gt_contact.create_dataset('observation.EE_normals_map', shape=(0,) + image_shape + (3,), chunks=(1,) + image_shape + (3,), dtype=np.float32, compressor=compressor, overwrite=True)
-    # if 'observation.env_dtc_map' not in zarr_gt_contact:
-    zarr_gt_contact.create_dataset('observation.env_dtc_map', shape=(0,) + image_shape + (1,), chunks=(1,) + image_shape + (1,), dtype=np.float32, compressor=compressor, overwrite=True)
-    # if 'observation.env_normals_map' not in zarr_gt_contact:
-    zarr_gt_contact.create_dataset('observation.env_normals_map', shape=(0,) + image_shape + (3,), chunks=(1,) + image_shape + (3,), dtype=np.float32, compressor=compressor, overwrite=True)
+    if 'observation.EE_dtc_map' not in zarr_gt_contact:
+        zarr_gt_contact.create_dataset('observation.EE_dtc_map', shape=(0,) + image_shape + (1,), chunks=(1,) + image_shape + (1,), dtype=np.float32, compressor=compressor, overwrite=True)
+    if 'observation.EE_normals_map' not in zarr_gt_contact:
+        zarr_gt_contact.create_dataset('observation.EE_normals_map', shape=(0,) + image_shape + (3,), chunks=(1,) + image_shape + (3,), dtype=np.float32, compressor=compressor, overwrite=True)
+    if 'observation.env_dtc_map' not in zarr_gt_contact:
+        zarr_gt_contact.create_dataset('observation.env_dtc_map', shape=(0,) + image_shape + (1,), chunks=(1,) + image_shape + (1,), dtype=np.float32, compressor=compressor, overwrite=True)
+    if 'observation.env_normals_map' not in zarr_gt_contact:
+        zarr_gt_contact.create_dataset('observation.env_normals_map', shape=(0,) + image_shape + (3,), chunks=(1,) + image_shape + (3,), dtype=np.float32, compressor=compressor, overwrite=True)
 
 #%%
 
@@ -275,7 +218,10 @@ for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), tot
     EE_object_mesh_list = get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=EE_object_transform)
     EE_object_mesh = tm.util.concatenate(EE_object_mesh_list)
     #%%
-    env_object_meshes_list = get_env_object_meshes_list(env, binding_thickness, cover_thickness, cover_overhang)
+    env_book_sizes_list = [env.env_book_sizes[0,i].tolist() for i in range(env.non_merged_env_books_list)]
+    env_book_poses_list = [convert_sapien_pose_to_transform_matrix(env_book_over_envs[0].pose) for env_book_over_envs in env.non_merged_env_books_list]
+    env_object_meshes_list = get_env_object_meshes_list(env_book_sizes_list, env_book_poses_list, binding_thickness, cover_thickness, cover_overhang)
+
     # table_mesh = env.table_scene.table.get_collision_meshes()
 
     table_length, table_width, table_height = env.table_scene.table_length, env.table_scene.table_width, env.table_scene.table_height
@@ -391,7 +337,9 @@ for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), tot
             EE_object_mesh_list = get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=EE_object_transform)
             EE_object_mesh = tm.util.concatenate(EE_object_mesh_list)
             #%%
-            env_object_meshes_list = get_env_object_meshes_list(env, binding_thickness, cover_thickness, cover_overhang)
+            env_book_sizes_list = [env.env_book_sizes[0,i].tolist() for i in range(env.non_merged_env_books_list)]
+            env_book_poses_list = [convert_sapien_pose_to_transform_matrix(env_book_over_envs[0].pose) for env_book_over_envs in env.non_merged_env_books_list]
+            env_object_meshes_list = get_env_object_meshes_list(env_book_sizes_list, env_book_poses_list, binding_thickness, cover_thickness, cover_overhang)
             # table_mesh = env.table_scene.table.get_collision_meshes()
 
             table_length, table_width, table_height = env.table_scene.table_length, env.table_scene.table_width, env.table_scene.table_height

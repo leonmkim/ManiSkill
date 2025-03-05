@@ -19,7 +19,79 @@ from mani_skill.utils.geometry.rotation_conversions import matrix_to_quaternion
 
 from mani_skill.utils.geometry.rotation_conversions import quaternion_multiply, axis_angle_to_quaternion, quaternion_apply
 from mani_skill.utils.geometry.geometry import transform_points
+
 import einops
+import trimesh as tm
+from scipy.spatial.transform import Rotation as R
+
+from pathlib import Path
+import sys, os
+# add contact_estimation to the path
+path_to_this_file = Path(os.path.abspath(__file__))
+path_to_contact_estimation = path_to_this_file.parents[5] / "contact_estimation"
+sys.path.append(str(path_to_contact_estimation))
+from src.dataset.gazebo_to_trimesh import create_trimesh_camera, generate_rays_from_camera, generate_min_distances_image, normals_to_xyz_map, get_min_grasped_obj_sdf_at_env_hits_data, get_min_env_sdf_at_grasped_obj_hits_data, camera_marker_transformed
+
+def get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=None):
+    pages_length = length - cover_overhang - binding_thickness
+    pages_width = width - 2*cover_thickness
+    pages_height = height - 2*cover_overhang
+    full_sizes = [
+        [pages_length, pages_width, pages_height], # pages
+        [binding_thickness*2, width, height], # binding
+        [length, cover_thickness, height], # cover
+        [length, cover_thickness, height], # cover
+    ]
+    poses = [
+        sapien.Pose([(binding_thickness - cover_overhang)/2, 0, 0]).to_transformation_matrix(), # pages
+        sapien.Pose([(binding_thickness - length)/2, 0, 0]).to_transformation_matrix(), # binding
+        sapien.Pose([0, (pages_width + cover_thickness)/2, 0]).to_transformation_matrix(), # cover
+        sapien.Pose([0, -(pages_width + cover_thickness)/2, 0]).to_transformation_matrix(), # cover
+    ]
+    book_geometries = []
+    for i, (full_size, pose) in enumerate(zip(full_sizes, poses)):
+        # builder.add_box_collision(pose, half_size, density=density)
+        object_geometry = tm.primitives.Box(extents=full_size)
+        object_geometry.apply_transform(pose)
+        if global_transform is not None:
+            object_geometry.apply_transform(global_transform)
+        book_geometries.append(object_geometry)
+
+    return book_geometries
+
+def convert_sapien_pose_to_transform_matrix(sapien_pose):
+    position, quaternion = sapien_pose.p, sapien_pose.q
+    if len(position.shape) == 2:
+        position = position[0]
+    if len(quaternion.shape) == 2:
+        quaternion = quaternion[0]
+    if isinstance(position, torch.Tensor):
+        position = position.cpu().numpy()
+    if isinstance(quaternion, torch.Tensor):
+        quaternion = quaternion.cpu().numpy()
+    transform_matrix = np.eye(4)
+    transform_matrix[:3, :3] = R.from_quat(quaternion, scalar_first=True).as_matrix()
+    transform_matrix[:3, 3] = position
+    return transform_matrix
+
+def get_table_primitive_mesh_list(length, width, height, global_transform=None):
+    table_box_offset_pose = np.eye(4)
+    table_box_offset_pose[2, 3] = height/2
+    table_mesh = tm.primitives.Box(extents=[length, width, height], transform=table_box_offset_pose)
+    if global_transform is not None:
+        table_mesh.apply_transform(global_transform)
+    return [table_mesh]
+
+def get_env_object_meshes_list(env_book_sizes_list, env_object_transforms_list, binding_thickness, cover_thickness, cover_overhang):
+    env_object_meshes_list = []
+    # for i, env_book_over_envs in enumerate(env.non_merged_env_books_list):
+    for (env_book_sizes, env_object_transform) in zip(env_book_sizes_list, env_object_transforms_list):
+        # env_object_mesh = env_book_over_envs[0].get_collision_meshes()
+        # env_object_meshes_list.extend(env_object_mesh)
+        length, width, height = env_book_sizes
+        env_object_mesh = get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=env_object_transform)
+        env_object_meshes_list.extend(env_object_mesh)
+    return env_object_meshes_list
 
 def _build_book(
     scene: ManiSkillScene, 
@@ -92,6 +164,10 @@ class BookInsertionEnv(BaseEnv):
 
     cam_resize_factor: float = 0.5
 
+    render_contact_map: bool = False
+    render_dtc_maps: bool = False
+    render_normals_maps: bool = False
+
     max_extrinsic_contacts: int = 50 # for padding
 
     # success conditions
@@ -125,6 +201,20 @@ class BookInsertionEnv(BaseEnv):
         #     if key in kwargs:
         #         setattr(self, key, kwargs[key])
         #         del kwargs[key]
+
+        # print(kwargs)
+        if 'render_contact_map' in kwargs:
+            self.render_contact_map = kwargs['render_contact_map']
+            del kwargs['render_contact_map']
+        if 'render_dtc_maps' in kwargs:
+            self.render_dtc_maps = kwargs['render_dtc_maps']
+            del kwargs['render_dtc_maps']
+        if 'render_normals_maps' in kwargs:
+            self.render_normals_maps = kwargs['render_normals_maps']
+            del kwargs['render_normals_maps']
+        if 'cam_resize_factor' in kwargs:
+            self.cam_resize_factor = kwargs['cam_resize_factor']
+            del kwargs['cam_resize_factor']
 
         super().__init__(
             *args,
@@ -223,7 +313,6 @@ class BookInsertionEnv(BaseEnv):
             # self.camera_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="camera_pose", body_type="kinematic")
             # self._hidden_objects.append(self.camera_pose)
             # <<<<<<<<< for debugging
-
 
             grasped_book_lengths = self._batched_episode_rng.uniform(0.1, 0.15)
             grasped_book_widths = self._batched_episode_rng.uniform(0.03, 0.065) # max gripper width is .08
@@ -355,6 +444,12 @@ class BookInsertionEnv(BaseEnv):
             b = len(env_idx)
             self.table_scene.initialize(env_idx)
 
+            self.table_mesh = get_table_primitive_mesh_list(self.table_scene.table_length, self.table_scene.table_width, self.table_scene.table_height, global_transform=convert_sapien_pose_to_transform_matrix(self.table_scene.table.pose))
+
+            base_camera_intrinsic_cv = self.scene.sensors['base_camera'].get_params()['intrinsic_cv'][0].clone()
+            base_camera_cam2world_gl = self.scene.sensors['base_camera'].get_params()['cam2world_gl'][0].clone() # this is world to cam
+            self.tm_camera = create_trimesh_camera(base_camera_intrinsic_cv, base_camera_cam2world_gl.cpu().numpy())
+
             # Initialize the robot
             qpos = torch.tensor(
                 [
@@ -452,8 +547,13 @@ class BookInsertionEnv(BaseEnv):
     def _get_obs_extra(self, info):
         extra = dict()
         # if 'contact' in self._obs_mode:
-        extra['extrinsic_contact_positions'] = self.get_extrinsic_contact_positions()
-        extra['extrinsic_contact_map'] = self.project_contact_positions_to_camera(extra['extrinsic_contact_positions'])
+        
+        if self.render_contact_map:
+            extra['extrinsic_contact_positions'] = self.get_extrinsic_contact_positions()
+            extra['extrinsic_contact_map'] = self.project_contact_positions_to_camera(extra['extrinsic_contact_positions'])
+
+        if self.render_dtc_maps or self.render_normals_maps:
+            extra.update(self.get_extra_contact_features())
 
         # get current end effector pose
         end_effector_pose = self.agent.tcp.pose.raw_pose # bx7
@@ -465,6 +565,69 @@ class BookInsertionEnv(BaseEnv):
 
         return extra
     
+    def get_grasped_object_mesh(self):
+        EE_object_length, EE_object_width, EE_object_height = self.grasped_book_sizes[0].tolist()
+        EE_object_mesh_list = get_book_primitive_mesh_list(EE_object_length, EE_object_width, EE_object_height, self.binding_thickness, self.cover_thickness, self.cover_overhang, global_transform=convert_sapien_pose_to_transform_matrix(self.non_merged_grasped_books_list[0].pose))
+        EE_object_mesh = tm.util.concatenate(EE_object_mesh_list)
+        return EE_object_mesh_list, EE_object_mesh
+
+    def get_env_object_meshes(self):
+        env_book_sizes_list = [self.env_book_sizes[0,i].tolist() for i in range(len(self.non_merged_env_books_list))]
+        env_book_poses_list = [convert_sapien_pose_to_transform_matrix(env_book_over_envs[0].pose) for env_book_over_envs in self.non_merged_env_books_list]
+        env_object_meshes_list = get_env_object_meshes_list(env_book_sizes_list, env_book_poses_list, self.binding_thickness, self.cover_thickness, self.cover_overhang)
+        env_mesh_list = env_object_meshes_list + self.table_mesh
+
+        env_mesh = tm.util.concatenate(env_object_meshes_list + self.table_mesh)
+        return env_mesh_list, env_mesh
+
+    def get_extra_contact_features(self):
+        # TODO handle parallel envs
+        extra_contact_features_dict = dict()
+
+        env_mesh_list, env_mesh = self.get_env_object_meshes()
+        EE_object_mesh_list, EE_object_mesh = self.get_grasped_object_mesh()
+
+        ray_origins, ray_directions, pixels_uv = generate_rays_from_camera(self.tm_camera)
+
+        env_hit_min_locations, env_hit_min_pixels_uv, env_hit_min_distances, env_hit_min_index_tri, env_hit_min_ray_directions = get_min_grasped_obj_sdf_at_env_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh, EE_object_mesh_list)
+        if self.render_dtc_maps:
+            EE_obj_sdf_on_env_image, EE_obj_sdf_on_env_mask = generate_min_distances_image(env_hit_min_pixels_uv, env_hit_min_distances, self.tm_camera.resolution[::-1])
+            EE_obj_sdf_on_env_image = EE_obj_sdf_on_env_image.astype(np.float32)[:240, :320, np.newaxis]
+            # EE_obj_sdf_on_env_mask = EE_obj_sdf_on_env_mask.astype(bool)[:240, :320]
+            # assert EE_obj_sdf_on_env_image.shape == image_shape + (1,)
+
+            EE_obj_sdf_on_env_image = common.to_tensor(EE_obj_sdf_on_env_image).unsqueeze(0) # hack to add env/batch dimension
+            extra_contact_features_dict['env_dtc_map'] = EE_obj_sdf_on_env_image
+
+        if self.render_normals_maps:
+            min_env_surface_normals = env_mesh.face_normals[env_hit_min_index_tri]
+            env_xyz_normals_image, env_xyz_normals_image_mask = normals_to_xyz_map(min_env_surface_normals, self.tm_camera.resolution[::-1], env_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
+            env_xyz_normals_image = env_xyz_normals_image.astype(np.float32)[:240, :320]
+            # env_xyz_normals_image_mask = env_xyz_normals_image_mask.astype(bool)[:240, :320]
+
+            env_xyz_normals_image = common.to_tensor(env_xyz_normals_image).unsqueeze(0) # hack to add env/batch dimension
+            extra_contact_features_dict['env_normals_map'] = env_xyz_normals_image
+
+        EE_obj_hit_min_locations, EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, EE_obj_hit_min_index_tri, EE_obj_hit_min_ray_directions = get_min_env_sdf_at_grasped_obj_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh_list, EE_object_mesh)
+        if self.render_dtc_maps:
+            env_sdf_on_EE_obj_image, env_sdf_on_EE_obj_mask = generate_min_distances_image(EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, self.tm_camera.resolution[::-1])
+            env_sdf_on_EE_obj_image = env_sdf_on_EE_obj_image.astype(np.float32)[:240, :320, np.newaxis]
+            # env_sdf_on_EE_obj_mask = env_sdf_on_EE_obj_mask.astype(bool)[:240, :320]
+
+            env_sdf_on_EE_obj_image = common.to_tensor(env_sdf_on_EE_obj_image).unsqueeze(0) # hack to add env/batch dimension
+            extra_contact_features_dict['EE_dtc_map'] = env_sdf_on_EE_obj_image
+        
+        if self.render_normals_maps:       
+            min_EE_object_surface_normals = EE_object_mesh.face_normals[EE_obj_hit_min_index_tri] # these are normalized already
+            EE_object_xyz_normals_image, EE_object_xyz_normals_image_mask = normals_to_xyz_map(min_EE_object_surface_normals, self.tm_camera.resolution[::-1], EE_obj_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
+            EE_object_xyz_normals_image = EE_object_xyz_normals_image.astype(np.float32)[:240, :320]
+            # EE_object_xyz_normals_image_mask = EE_object_xyz_normals_image_mask.astype(bool)[:240, :320]
+            
+            EE_object_xyz_normals_image = common.to_tensor(EE_object_xyz_normals_image).unsqueeze(0) # hack to add env/batch dimension
+            extra_contact_features_dict['EE_normals_map'] = EE_object_xyz_normals_image
+        
+        return extra_contact_features_dict
+
     def batched_position_to_pixel_coordinates(self, positions):
         # positions: bxNx3
         assert positions.shape[-1] == 3, "positions must have shape bxNx3"
