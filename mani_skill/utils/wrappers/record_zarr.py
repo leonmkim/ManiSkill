@@ -8,8 +8,8 @@ import gymnasium as gym
 
 import h5py
 import zarr
+ZARR_VERSION=int(zarr.__version__.split('.')[0])
 from numcodecs import blosc
-import zarr.hierarchy
 blosc.set_nthreads(24)
 blosc.use_threads = True
 
@@ -61,7 +61,7 @@ def temp_deep_print_shapes(x, prefix=""):
 
 def clean_trajectories(
         # h5_file: h5py.File, 
-        zarr_root: zarr.hierarchy.Group,
+        zarr_root: zarr.Group,
         json_dict: dict, prune_empty_action=True
         ):
     """Clean trajectories by renaming and pruning trajectories in place.
@@ -305,9 +305,12 @@ class RecordEpisodeZarr(gym.Wrapper):
 
             # self._h5_file = h5py.File(self.output_dir / f"{trajectory_name}.h5", "w")
             self.filename = str(self.output_dir / f"{trajectory_name}.zarr")
-            self.zarr_storage = zarr.DirectoryStore(
-                self.filename
-            )
+            if ZARR_VERSION > 2:
+                self.zarr_storage = zarr.storage.LocalStore(self.filename)
+            else:
+                self.zarr_storage = zarr.DirectoryStore(
+                    self.filename
+                )
             self.zarr_root = zarr.group(store=self.zarr_storage)
             self.data_group = self.zarr_root.create_group("data")
             self.meta_group = self.zarr_root.create_group("meta")
@@ -400,7 +403,10 @@ class RecordEpisodeZarr(gym.Wrapper):
         return img
 
     def create_new_trajectory_buffer(self):
-        trajectory_buffer = zarr.MemoryStore()
+        if ZARR_VERSION > 2:
+            trajectory_buffer = zarr.storage.MemoryStore()
+        else:
+            trajectory_buffer = zarr.MemoryStore()
         trajectory_root = zarr.group(store=trajectory_buffer)
         trajectory_root.create_group("data")
         return trajectory_root
@@ -749,7 +755,7 @@ class RecordEpisodeZarr(gym.Wrapper):
         self._elapsed_record_steps += 1
         return obs, rew, terminated, truncated, info
     
-    def move_zarr_array_to_new_group(self, old_group: zarr.hierarchy.Group, new_group: zarr.hierarchy.Group, key):
+    def move_zarr_array_to_new_group(self, old_group: zarr.Group, new_group: zarr.Group, key):
         new_group.create_dataset(key, data=old_group[key][:], shape=old_group[key].shape, dtype=old_group[key].dtype, chunks=old_group[key].chunks, overwrite=True)
         del old_group[key]
 
@@ -843,17 +849,17 @@ class RecordEpisodeZarr(gym.Wrapper):
                 #             )
 
                 def recursive_copy_memory_store_to_disk(
-                        data: Union[zarr.hierarchy.Group, zarr.core.Array], 
-                        disk_group: zarr.hierarchy.Group, 
+                        data: Union[zarr.Group, zarr.Array], 
+                        disk_group: zarr.Group, 
                         key: str,
                         env_idx: int,
                 ):
-                    if isinstance(data, zarr.hierarchy.Group):
+                    if isinstance(data, zarr.Group):
                         if key not in disk_group:
                             disk_group.create_group(key)
                         for k in data.keys():
                             recursive_copy_memory_store_to_disk(data[k], disk_group[key], k, env_idx)
-                    elif isinstance(data, zarr.core.Array):
+                    elif isinstance(data, zarr.Array):
                         if key not in disk_group:
                             disk_group.create_dataset(key, shape=(0,) + data.shape[2:], dtype=data.dtype, chunks=(1,) + data.shape[2:], overwrite=True, compressor=self.zarr_compressor)
                         disk_group[key].append(data[start_ptr:end_ptr, env_idx])
@@ -1068,12 +1074,12 @@ class RecordEpisodeZarr(gym.Wrapper):
             # #         self._trajectory_buffer.fail, slice(min_env_ptr, N)
             # #     )
             # def recursive_flush_trajectory_buffer(
-            #         trajectory_data_group: zarr.hierarchy.Group, 
+            #         trajectory_data_group: zarr.Group, 
             #         min_env_ptr: int,
             #         N: int
             # ):
             #     for k, v in trajectory_data_group.items():
-            #         if isinstance(v, zarr.hierarchy.Group):
+            #         if isinstance(v, zarr.Group):
             #             recursive_flush_trajectory_buffer(v, min_env_ptr, N)
             #         else:
             #             trajectory_data_group[k] = v[min_env_ptr:N]

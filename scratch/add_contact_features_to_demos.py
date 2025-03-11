@@ -87,7 +87,7 @@ path_to_json = path_to_demo_root_dir / "demos.json"
 snap_to_env_state = True
 record_contact_features = True
 #%%
-zarr_store = zarr.open(str(path_to_zarr), mode='rw+')
+zarr_store = zarr.open(str(path_to_zarr), mode='r+')
 with open(path_to_json, 'r') as f:
     json_data = json.load(f)
 #%%
