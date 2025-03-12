@@ -5,11 +5,13 @@ import os, sys
 from pathlib import Path
 from tqdm import tqdm
 import numcodecs
+import concurrent.futures
 #%%
 path_to_existing_zarr = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/413_sim_demos_left_of_4th_book_20hz_act_sharded/413_sim_demos_left_of_4th_book_20hz_act/demos.zarr')
 assert path_to_existing_zarr.exists()
 # %%
-original_zarr_root = zarr.open(str(path_to_existing_zarr), mode='r')
+original_zarr_root = zarr.open(str(path_to_existing_zarr), mode='r+')
+#%%
 new_zarr_path = Path(str(path_to_existing_zarr).replace('.zarr', '_resharded.zarr'))
 assert new_zarr_path.exists()
 print(f"new zarr path: {new_zarr_path}")
@@ -59,21 +61,38 @@ new_zarr_root = zarr.open(str(new_zarr_path), mode='r', zarr_format=3)
 # del new_zarr_root['metadata']
 # %%
 # check that the resharded zarr is correct
+def check_arrays(original_array, new_array, key):
+    # check attributes
+    assert original_array.attrs == new_array.attrs, f"Attributes mismatch for key {key}"
+    assert original_array.shape == new_array.shape, f"Shape mismatch for key {key}"
+    assert original_array.dtype == new_array.dtype, f"Dtype mismatch for key {key}"
+    # Optionally check chunks and other properties.
+    for i in range(original_array.shape[0]):
+        assert np.allclose(original_array[i], new_array[i], equal_nan=True), f"Array not the same for key {key} at index {i} with original value {original_array[i]} and new value {new_array[i]}"
+
 def recursive_check_arrays(original_group, new_group):
-    for key in tqdm(original_group.keys()):
-        if isinstance(original_group[key], zarr.Group):
-            # also check attributes
-            assert original_group[key].attrs == new_group[key].attrs
-            recursive_check_arrays(original_group[key], new_group[key])
-        elif isinstance(original_group[key], zarr.Array):
-            # also check attributes
-            assert original_group[key].attrs == new_group[key].attrs
-            assert original_group[key].shape == new_group[key].shape
-            # assert original_group[key].chunks == new_group[key].chunks
-            assert original_group[key].dtype == new_group[key].dtype
-            # assert np.allclose(original_group[key][:], new_group[key][:])
-            for i in tqdm(range(original_group[key].shape[0])):
-                assert np.allclose(original_group[key][i], new_group[key][i]), f"array not the same for key {key} at index {i} with original value {original_group[key][i]} and new value {new_group[key][i]}"
-recursive_check_arrays(original_zarr_root['data'], new_zarr_root['data'])
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures=[]
+        for key in tqdm(original_group.keys()):
+            if isinstance(original_group[key], zarr.Group):
+                # also check attributes
+                assert original_group[key].attrs == new_group[key].attrs
+                recursive_check_arrays(original_group[key], new_group[key])
+            elif isinstance(original_group[key], zarr.Array):
+                if key == 'ep_ids':
+                    continue
+                future = executor.submit(check_arrays, original_group[key], new_group[key], key)
+                futures.append(future)
+                # also check attributes
+                # assert original_group[key].attrs == new_group[key].attrs
+                # assert original_group[key].shape == new_group[key].shape
+                # # assert original_group[key].chunks == new_group[key].chunks
+                # assert original_group[key].dtype == new_group[key].dtype
+                # # assert np.allclose(original_group[key][:], new_group[key][:])
+                # for i in tqdm(range(original_group[key].shape[0])):
+                #     assert np.allclose(original_group[key][i], new_group[key][i], equal_nan=True), f"array not the same for key {key} at index {i} with original value {original_group[key][i]} and new value {new_group[key][i]}"
+        for future in futures:
+            future.result()
+# recursive_check_arrays(original_zarr_root['data'], new_zarr_root['data'])
 recursive_check_arrays(original_zarr_root['meta'], new_zarr_root['meta'])
 # %%

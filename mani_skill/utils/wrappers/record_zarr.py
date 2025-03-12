@@ -76,12 +76,12 @@ def clean_trajectories(
     """
     json_episodes = json_dict["episodes"]
     # assert len(h5_file) == len(json_episodes)
-    assert len(zarr_root.meta.episode_ends) == len(json_episodes)
+    assert len(zarr_root['meta']['episode_ends'][:]) == len(json_episodes)
 
     # Assumes each trajectory is named "traj_{i}"
     prefix_length = len("traj_")
     # ep_ids = sorted([int(x[prefix_length:]) for x in h5_file.keys()])
-    ep_ids = sorted([int(x[prefix_length:]) for x in zarr_root.meta.ep_ids])
+    ep_ids = sorted([int(x[prefix_length:]) for x in zarr_root['meta']['ep_ids'][:]])
 
     new_json_episodes = []
     new_ep_id = 0

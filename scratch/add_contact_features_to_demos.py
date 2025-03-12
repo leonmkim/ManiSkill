@@ -401,7 +401,7 @@ for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), tot
         #     time.sleep(time_to_sleep)
         if elapsed_timesteps % 50 == 0:
             print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
-    assert len(zarr_gt_contact['observation.env_dtc_map']) == episode_end_idx
+    assert len(zarr_gt_contact['observation.env_dtc_map'][:]) == episode_end_idx
     #%%
     # if key == ord('q'):
     #     break
