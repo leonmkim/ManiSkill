@@ -9,6 +9,10 @@ import gymnasium as gym
 import h5py
 import zarr
 ZARR_VERSION=int(zarr.__version__.split('.')[0])
+# if ZARR_VERSION > 2:
+#     import zarrs
+#     zarr.config.set({"codec_pipeline.path": "zarrs.ZarrsCodecPipeline"})
+    
 from numcodecs import blosc
 blosc.set_nthreads(24)
 blosc.use_threads = True
