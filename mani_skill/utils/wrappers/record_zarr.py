@@ -371,6 +371,10 @@ class RecordEpisodeZarr(gym.Wrapper):
 
             self.base_env._after_simulation_step = wrapped_after_simulation_step
 
+    def change_output_dir(self, output_dir: str):
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
     @property
     def num_envs(self):
         return self.base_env.num_envs
