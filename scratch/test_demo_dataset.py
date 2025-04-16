@@ -24,13 +24,13 @@ from src.utils.viz_utils import normals_to_rgb_image, grasped_env_dtc_map_to_im,
 # # %%
 # traj = demo['traj_0']
 # path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250214_072559.zarr')
-path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/413_sim_demos_left_of_4th_book_20hz_act/demos.zarr')
+path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/240_sim_demos_left_of_4th_book_bookends_no_env_rand_20hz_act/demos.zarr')
 
-demo = zarr.open(path_to_demo, 'r')
+demo = zarr.open(path_to_demo, mode='r')
 dataset_name = path_to_demo.stem
 
 #%%
-episode_idx = 412
+episode_idx = 239
 within_episode_idx = 50
 episode_name = f"traj_{episode_idx}"
 output_dir = path_to_demo.parent / dataset_name / episode_name
@@ -39,24 +39,24 @@ if not output_dir.exists():
     output_dir.mkdir(parents=True)
 episode_start = 0
 if episode_idx > 0:
-    episode_start = demo.meta.episode_ends[episode_idx - 1]
-episode_end = demo.meta.episode_ends[episode_idx]
+    episode_start = demo['meta']['episode_ends'][episode_idx - 1]
+episode_end = demo['meta']['episode_ends'][episode_idx]
 
-rgb_image = demo.data['observation.rgb'][episode_start+within_episode_idx]
-EE_dtc_map = demo.data.gt_contact['observation.EE_dtc_map'][episode_start+within_episode_idx]
-env_dtc_map = demo.data.gt_contact['observation.env_dtc_map'][episode_start+within_episode_idx]
-EE_normals_map = demo.data.gt_contact['observation.EE_normals_map'][episode_start+within_episode_idx]
-env_normals_map = demo.data.gt_contact['observation.env_normals_map'][episode_start+within_episode_idx]
+rgb_image = demo['data']['observation.rgb'][episode_start+within_episode_idx]
+EE_dtc_map = demo['data']['gt_contact']['observation.EE_dtc_map'][episode_start+within_episode_idx]
+env_dtc_map = demo['data']['gt_contact']['observation.env_dtc_map'][episode_start+within_episode_idx]
+EE_normals_map = demo['data']['gt_contact']['observation.EE_normals_map'][episode_start+within_episode_idx]
+env_normals_map = demo['data']['gt_contact']['observation.env_normals_map'][episode_start+within_episode_idx]
 #%%
 
-rgb_images_for_episode = demo.data['observation.rgb'][episode_start:episode_end]
-# depth_images_for_episode = demo.data['observation.depth'][episode_start:episode_end]
-# contact_images_for_episode = demo.data.gt_contact['observation.contact_map'][episode_start:episode_end]
-# grasped_object_masks_for_episode = demo.data.gt_segmentation['observation.EE_obj_mask'][episode_start:episode_end]*255
-EE_dtc_maps_for_episode = demo.data.gt_contact['observation.EE_dtc_map'][episode_start:episode_end]
-env_dtc_maps_for_episode = demo.data.gt_contact['observation.env_dtc_map'][episode_start:episode_end]
-EE_normals_maps_for_episode = demo.data.gt_contact['observation.EE_normals_map'][episode_start:episode_end]
-env_normals_maps_for_episode = demo.data.gt_contact['observation.env_normals_map'][episode_start:episode_end]
+rgb_images_for_episode = demo['data']['observation.rgb'][episode_start:episode_end]
+# depth_images_for_episode = demo['data']['observation.depth'][episode_start:episode_end]
+# contact_images_for_episode = demo['data']['gt_contact']['observation.contact_map'][episode_start:episode_end]
+# grasped_object_masks_for_episode = demo['data'].gt_segmentation['observation.EE_obj_mask'][episode_start:episode_end]*255
+EE_dtc_maps_for_episode = demo['data']['gt_contact']['observation.EE_dtc_map'][episode_start:episode_end]
+env_dtc_maps_for_episode = demo['data']['gt_contact']['observation.env_dtc_map'][episode_start:episode_end]
+EE_normals_maps_for_episode = demo['data']['gt_contact']['observation.EE_normals_map'][episode_start:episode_end]
+env_normals_maps_for_episode = demo['data']['gt_contact']['observation.env_normals_map'][episode_start:episode_end]
 #%%
 images_to_video(
     images=rgb_images_for_episode,
@@ -147,6 +147,6 @@ path_to_zarr = Path('~/fish_leon/FISH/expert_demos/frankagym/FrankaInsertion-v1/
 path_to_zarr = path_to_zarr.expanduser()
 zarr_dataset = zarr.open(path_to_zarr, 'r')
 # %%
-plt.imshow(zarr_dataset.data['observation.EE_obj_mask'][0])
+plt.imshow(zarr_dataset['data']['observation.EE_obj_mask'][0])
 
 # %%
