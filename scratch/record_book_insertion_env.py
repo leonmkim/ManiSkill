@@ -23,11 +23,16 @@ import cv2
 import time
 
 from mani_skill.utils.teleoperation import SpacemouseInput
+
+import logging
+record_logger = logging.getLogger("record_logger")
+
+
 #%%
 spacemouse_input = SpacemouseInput()
 desired_viewing_size = (256, 256)
 output_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop")
-record_demonstrations = False
+record_demonstrations = True
 
 #%%
 ## testing book insertion task
@@ -42,8 +47,17 @@ env = gym.make(
     render_backend="gpu",
     obs_mode="rgb+depth+segmentation",
     render_contact_map=True,
-    render_dtc_maps=True,
-    render_normals_maps=True,
+    render_dtc_maps=False,
+    render_normals_maps=False,
+    spawn_new_env_books=False,
+    suppress_evaluation=True,
+    book_ends_dict=dict(
+        mode='dynamic',
+        height=0.1,
+        mass=3.5,
+        friction=0.15,
+        color="#808080", # default color
+    ),
     # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
     # control_mode="pd_ee_delta_pose",
@@ -69,15 +83,15 @@ if record_demonstrations:
     env = RecordEpisodeZarr(
         env,
         output_dir=output_dir,
-        save_video=True,
-        save_trajectory=False,
+        save_video=False,
+        save_trajectory=True,
         info_on_video=False,
         record_reward=False,
         video_fps=20,
         source_type="teleoperation",
         source_desc="teleoperation via spacemouse",
     )
-seed = 31
+seed = 0
 num_trajs = 0
 #%%
 sim_dt = 1.0 / env.sim_config.sim_freq
@@ -164,12 +178,11 @@ while True:
         elapsed_timesteps = info["elapsed_steps"].item()
         elapsed_simtime = elapsed_timesteps * sim_dt_bw_step
         elapsed_realtime = time.perf_counter() - start_time
-        # time_to_sleep = sim_dt_bw_step - elapsed_time
         time_to_sleep = elapsed_simtime - elapsed_realtime
-        # if time_to_sleep > 0:
-        #     time.sleep(time_to_sleep)
+        if time_to_sleep > 0:
+            time.sleep(time_to_sleep)
         if elapsed_timesteps % 50 == 0:
-            print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
+            record_logger.info(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
     
     if record_demonstrations:
         if key == ord('q'):
@@ -179,11 +192,13 @@ while True:
             seed += 1
             num_trajs += 1
             env.reset(seed=seed)
+            record_logger.info(f"starting new episode with seed {seed}")
             # viewer = env.render_human()
             spacemouse_input.reset()
             continue
         elif key == ord('r'):
             env.reset(seed=seed, options=dict(save_trajectory=False))
+            record_logger.info(f"restarting episode with seed {seed}")
             # viewer = env.render_human()
             spacemouse_input.reset()
             continue
@@ -191,6 +206,9 @@ while True:
         break
 
 cv2.destroyAllWindows()
+if key == ord('q'):
+    # dont save the trajectory
+    env.reset(seed=seed, options=dict(save_trajectory=False))
 #%%
 # if record_demonstrations:
 #     h5_file_path = env._h5_file.copy

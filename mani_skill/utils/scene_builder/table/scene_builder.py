@@ -39,7 +39,7 @@ class SimpleTableSceneBuilder(SceneBuilder):
         #     p=[-0.12, 0, -0.9196429], q=euler2quat(0, 0, np.pi / 2)
         # )
         self.table_init_pose = sapien.Pose(
-            p=[self.table_box_size[0]-0.2, 0, -self.table_box_size[2]*2], q=[1.,0,0,0]
+            p=[self.table_box_size[0]-0.2, 0, -self.table_box_size[2]*2], q=[1.,0,0,0],
         )
         builder.initial_pose = self.table_init_pose
         table = builder.build_static(name="table-workspace")

@@ -34,7 +34,7 @@ path_to_contact_estimation = path_to_this_file.parents[5] / "contact_estimation"
 sys.path.append(str(path_to_contact_estimation))
 from src.dataset.gazebo_to_trimesh import create_trimesh_camera, generate_rays_from_camera, generate_min_distances_image, normals_to_xyz_map, get_min_grasped_obj_sdf_at_env_hits_data, get_min_env_sdf_at_grasped_obj_hits_data, camera_marker_transformed
 
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 
 book_insertion_env_logger = logging.getLogger("book_insertion_env_logger")
 
@@ -143,6 +143,34 @@ def _build_book(
         builder.add_box_visual(pose, half_size, material=mat)
     return builder
     
+def _build_book_end(
+    scene: ManiSkillScene, 
+    length, width, height,
+    color="#FFD289", 
+    mass=0.5,
+    friction=0.3, # default for both static and dynamic is 0.3
+):
+    # book end is just a box
+    if isinstance(color, str):
+        color = sapien_utils.hex2rgba(color)
+    builder = scene.create_actor_builder()
+    half_size = [length/2, width/2, height/2]
+    pose = sapien.Pose([0, 0, 0])
+
+    # compute the density from the mass and volume
+    density = mass / (length * width * height)
+    phys_mat = sapien.physx.get_default_material()
+    phys_mat.set_static_friction(friction) # default for both static and dynamic is 0.3
+    phys_mat.set_dynamic_friction(friction)
+    builder.add_box_collision(pose, half_size, density=density, material=phys_mat)
+
+    viz_mat = sapien.render.RenderMaterial(
+        base_color=color, roughness=0.5, specular=0.5
+    )
+    builder.add_box_visual(pose, half_size, material=viz_mat)
+    return builder
+
+
 @register_env("BookInsertion-v0", max_episode_steps=100)
 class BookInsertionEnv(BaseEnv):
     """
@@ -188,6 +216,16 @@ class BookInsertionEnv(BaseEnv):
     spawn_new_env_books: bool = True
     spawn_new_grasped_book: bool = True
     shuffle_env_books_mode: str = 'none'
+
+    book_ends_dict: Dict[str, Any] = dict(
+        mode='none',
+        height=0.25,
+        mass=0.5,
+        color="#FFD289", # default color
+        friction=0.3, # default friction for sapien objects is 0.3
+    )
+
+    suppress_evaluation: bool = False
     
     # book_toppled_angle_with_vertical_threshold: float = np.deg2rad(45)
     # # from base of gripper fingers to tip of fingers is .047m
@@ -222,28 +260,13 @@ class BookInsertionEnv(BaseEnv):
 
         # print(kwargs)
         # add custom kwargs to the env
-        if 'render_contact_map' in kwargs:
-            self.render_contact_map = kwargs['render_contact_map']
-            del kwargs['render_contact_map']
-        if 'render_dtc_maps' in kwargs:
-            self.render_dtc_maps = kwargs['render_dtc_maps']
-            del kwargs['render_dtc_maps']
-        if 'render_normals_maps' in kwargs:
-            self.render_normals_maps = kwargs['render_normals_maps']
-            del kwargs['render_normals_maps']
-        if 'cam_resize_factor' in kwargs:
-            self.cam_resize_factor = kwargs['cam_resize_factor']
-            del kwargs['cam_resize_factor']
-        if 'spawn_new_env_books' in kwargs:
-            self.spawn_new_env_books = kwargs['spawn_new_env_books']
-            del kwargs['spawn_new_env_books']
-        if 'spawn_new_grasped_book' in kwargs:
-            self.spawn_new_grasped_book = kwargs['spawn_new_grasped_book']
-            del kwargs['spawn_new_grasped_book']
-        if 'shuffle_env_books_mode' in kwargs:
-            self.shuffle_env_books_mode = kwargs['shuffle_env_books_mode']
-            del kwargs['shuffle_env_books_mode']
-
+        for key in kwargs:
+            # if key in self.__dict__:
+            if key in BookInsertionEnv.__dict__:
+                setattr(self, key, kwargs[key])
+                # del kwargs[key]
+        
+        assert self.book_ends_dict['mode'] in ['none', 'static', 'dynamic'], f"book_ends_mode must be one of ['none', 'static', 'dynamic'], but got {self.book_ends_dict['mode']}"
         assert self.shuffle_env_books_mode in ['none', 'left', 'right', 'all'], f"shuffle_env_books_mode must be one of ['none', 'left', 'right', 'all'], but got {self.shuffle_env_books_mode}"
         assert not (self.spawn_new_env_books and self.shuffle_env_books_mode != 'none'), "Cannot spawn new env books and shuffle at the same time"
 
@@ -254,6 +277,8 @@ class BookInsertionEnv(BaseEnv):
             reconfiguration_freq=reconfiguration_freq,
             **kwargs,
         )
+
+        print(f"BookInsertionEnv: {self.__dict__}")
 
     @property
     def _default_sim_config(self):
@@ -454,6 +479,7 @@ class BookInsertionEnv(BaseEnv):
             for j in range(self.num_env_books):
                 envs_per_env_book = []
                 for i in range(self.num_envs):
+                    scene_idxs = [i]
                     book_length = self.env_book_sizes[i, j, 0]
                     book_width = self.env_book_sizes[i, j, 1]
                     book_height = self.env_book_sizes[i, j, 2]
@@ -496,6 +522,54 @@ class BookInsertionEnv(BaseEnv):
 
             self.new_env_books_are_spawned = True
 
+
+            if self.book_ends_dict['mode'] != 'none':
+                left_book_ends = []
+                right_book_ends = []
+                self.book_end_sizes = [0.2, 0.3, self.book_ends_dict['height']]
+                for i in range(self.num_envs):
+                    scene_idxs = [i]
+                    left_book_end_builder = _build_book_end(
+                        self.scene,
+                        length=self.book_end_sizes[0],
+                        width=self.book_end_sizes[1],
+                        height=self.book_end_sizes[2],
+                        color=self.book_ends_dict['color'],
+                        mass=self.book_ends_dict['mass'],
+                        friction=self.book_ends_dict['friction'],
+                    )
+                    left_book_end_builder.set_initial_pose(sapien.Pose(p=[0, -1, 2]))
+                    left_book_end_builder.set_scene_idxs(scene_idxs)
+
+                    right_book_end_builder = _build_book_end(
+                        self.scene,
+                        length=self.book_end_sizes[0],
+                        width=self.book_end_sizes[1],
+                        height=self.book_end_sizes[2],
+                        color=self.book_ends_dict['color'],
+                        mass=self.book_ends_dict['mass'],
+                        friction=self.book_ends_dict['friction'],
+                    )
+                    right_book_end_builder.set_initial_pose(sapien.Pose(p=[0, -1, 3]))
+                    right_book_end_builder.set_scene_idxs(scene_idxs)
+                    if self.book_ends_dict['mode'] == 'static':
+                        left_book_end = left_book_end_builder.build_static(f"left_book_end_{i}")
+                        right_book_end = right_book_end_builder.build_static(f"right_book_end_{i}")
+                    elif self.book_ends_dict['mode'] == 'dynamic':
+                        left_book_end = left_book_end_builder.build_dynamic(f"left_book_end_{i}")
+                        right_book_end = right_book_end_builder.build_dynamic(f"right_book_end_{i}")
+                    else:
+                        raise ValueError(f"Invalid book ends mode {self.book_ends_dict['mode']}")
+                    self.remove_from_state_dict_registry(left_book_end)
+                    self.remove_from_state_dict_registry(right_book_end)
+                    left_book_ends.append(left_book_end)
+                    right_book_ends.append(right_book_end)
+                # merge the book ends
+                self.left_book_end = Actor.merge(left_book_ends, "left_book_end")
+                self.right_book_end = Actor.merge(right_book_ends, "right_book_end")
+                self.add_to_state_dict_registry(self.left_book_end)
+                self.add_to_state_dict_registry(self.right_book_end)
+                    
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         # book_insertion_env_logger.debug(f"times spawned new env books: {self.times_spawned_new_env_books}")
         with torch.device(self.device):
@@ -566,6 +640,25 @@ class BookInsertionEnv(BaseEnv):
                     pos[:, 1] += self.env_book_sizes[:, j, 1]/2
 
                 self.env_books_list[j].set_pose(Pose.create_from_pq(pos, quat))
+            
+            if self.book_ends_dict['mode'] != 'none':
+                identity_quat = torch.tensor([0., 0, 0, 1]).repeat(b, 1)
+                
+                left_book_end_pos = torch.zeros((b, 3))
+                left_book_end_pos[:, 0] = self.xy_slot_location[:, 0]
+                left_book_end_pos[:, 2] = self.book_end_sizes[2]/2
+                # place the left book end to the left of the left-most env book
+                leftmost_env_book_pos = self.env_books_list[0].pose.raw_pose[:, :3]
+                left_book_end_pos[:, 1] = leftmost_env_book_pos[:, 1] - (self.env_book_sizes[:, 0, 1]/2) - (self.book_end_sizes[1]/2)
+                self.left_book_end.set_pose(Pose.create_from_pq(left_book_end_pos, identity_quat))
+
+                right_book_end_pos = torch.zeros((b, 3))
+                right_book_end_pos[:, 0] = self.xy_slot_location[:, 0]
+                right_book_end_pos[:, 2] = self.book_end_sizes[2]/2
+                # place the right book end to the right of the right-most env book
+                rightmost_env_book_pos = self.env_books_list[-1].pose.raw_pose[:, :3]
+                right_book_end_pos[:, 1] = rightmost_env_book_pos[:, 1] + (self.env_book_sizes[:, -1, 1]/2) + (self.book_end_sizes[1]/2)
+                self.right_book_end.set_pose(Pose.create_from_pq(right_book_end_pos, identity_quat))
 
             # target_EE_pose = self.agent.controller.get_state()['arm']['target_pose']
             self.target_EE_pose.set_pose(end_effector_pose)
@@ -611,7 +704,7 @@ class BookInsertionEnv(BaseEnv):
             extra['extrinsic_contact_map'] = self.project_contact_positions_to_camera(extra['extrinsic_contact_positions'])
 
         if self.render_dtc_maps or self.render_normals_maps:
-            extra.update(self.get_extra_contact_features())
+            extra.update(self.get_extra_contact_features(self.render_dtc_maps, self.render_normals_maps))
 
         # get current end effector pose
         end_effector_pose = self.agent.tcp.pose.raw_pose # bx7
@@ -638,7 +731,7 @@ class BookInsertionEnv(BaseEnv):
         env_mesh = tm.util.concatenate(env_object_meshes_list + self.table_mesh)
         return env_mesh_list, env_mesh
 
-    def get_extra_contact_features(self):
+    def get_extra_contact_features(self, render_dtc_maps, render_normals_maps):
         # TODO handle parallel envs
         extra_contact_features_dict = dict()
 
@@ -648,7 +741,7 @@ class BookInsertionEnv(BaseEnv):
         ray_origins, ray_directions, pixels_uv = generate_rays_from_camera(self.tm_camera)
 
         env_hit_min_locations, env_hit_min_pixels_uv, env_hit_min_distances, env_hit_min_index_tri, env_hit_min_ray_directions = get_min_grasped_obj_sdf_at_env_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh, EE_object_mesh_list)
-        if self.render_dtc_maps:
+        if render_dtc_maps:
             EE_obj_sdf_on_env_image, EE_obj_sdf_on_env_mask = generate_min_distances_image(env_hit_min_pixels_uv, env_hit_min_distances, self.tm_camera.resolution[::-1])
             EE_obj_sdf_on_env_image = EE_obj_sdf_on_env_image.astype(np.float32)[:240, :320, np.newaxis]
             # EE_obj_sdf_on_env_mask = EE_obj_sdf_on_env_mask.astype(bool)[:240, :320]
@@ -657,7 +750,7 @@ class BookInsertionEnv(BaseEnv):
             EE_obj_sdf_on_env_image = common.to_tensor(EE_obj_sdf_on_env_image).unsqueeze(0) # hack to add env/batch dimension
             extra_contact_features_dict['env_dtc_map'] = EE_obj_sdf_on_env_image
 
-        if self.render_normals_maps:
+        if render_normals_maps:
             min_env_surface_normals = env_mesh.face_normals[env_hit_min_index_tri]
             env_xyz_normals_image, env_xyz_normals_image_mask = normals_to_xyz_map(min_env_surface_normals, self.tm_camera.resolution[::-1], env_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
             env_xyz_normals_image = env_xyz_normals_image.astype(np.float32)[:240, :320]
@@ -667,7 +760,7 @@ class BookInsertionEnv(BaseEnv):
             extra_contact_features_dict['env_normals_map'] = env_xyz_normals_image
 
         EE_obj_hit_min_locations, EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, EE_obj_hit_min_index_tri, EE_obj_hit_min_ray_directions = get_min_env_sdf_at_grasped_obj_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh_list, EE_object_mesh)
-        if self.render_dtc_maps:
+        if render_dtc_maps:
             env_sdf_on_EE_obj_image, env_sdf_on_EE_obj_mask = generate_min_distances_image(EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, self.tm_camera.resolution[::-1])
             env_sdf_on_EE_obj_image = env_sdf_on_EE_obj_image.astype(np.float32)[:240, :320, np.newaxis]
             # env_sdf_on_EE_obj_mask = env_sdf_on_EE_obj_mask.astype(bool)[:240, :320]
@@ -675,7 +768,7 @@ class BookInsertionEnv(BaseEnv):
             env_sdf_on_EE_obj_image = common.to_tensor(env_sdf_on_EE_obj_image).unsqueeze(0) # hack to add env/batch dimension
             extra_contact_features_dict['EE_dtc_map'] = env_sdf_on_EE_obj_image
         
-        if self.render_normals_maps:       
+        if render_normals_maps:       
             min_EE_object_surface_normals = EE_object_mesh.face_normals[EE_obj_hit_min_index_tri] # these are normalized already
             EE_object_xyz_normals_image, EE_object_xyz_normals_image_mask = normals_to_xyz_map(min_EE_object_surface_normals, self.tm_camera.resolution[::-1], EE_obj_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
             EE_object_xyz_normals_image = EE_object_xyz_normals_image.astype(np.float32)[:240, :320]
@@ -949,28 +1042,31 @@ class BookInsertionEnv(BaseEnv):
         # & the grasped book top and bottom must be within the slot in x-y
         # & top of grasped book must be close to the top of the slot
         # & above conditions must have held for 
-        not_toppled = ~self.any_env_books_toppled
-        bottom_within_slot = self.bottom_of_grasped_book_within_slot
-        top_within_slot = self.top_of_grasped_book_within_slot
-        z_distance_bw_top_of_grasped_book_and_top_of_slot = self.z_distance_between_top_of_grasped_book_and_top_of_slot
-        close_to_top_of_slot = z_distance_bw_top_of_grasped_book_and_top_of_slot < self.success_criteria_params['top_of_grasped_book_distance_to_top_of_slot_threshold']
-        transient_success = torch.logical_and(
-            not_toppled, torch.logical_and(
-                bottom_within_slot, torch.logical_and(
-                    top_within_slot, 
-                        close_to_top_of_slot)))
-        success_in_a_row = torch.logical_and(transient_success, self.last_eval_bool)
-        self.elapsed_success_duration += success_in_a_row.float() * self.time_between_env_steps
-        self.elapsed_success_duration *= transient_success.float() # reset to 0 if not transient success
-        success = self.elapsed_success_duration > self.success_criteria_params['success_duration_threshold']
-        self.last_eval_bool = transient_success
-        return dict(
-            success=success,
-            transient_success=transient_success, 
-            elapsed_success_duration=self.elapsed_success_duration,
-            z_distance_bw_top_of_grasped_book_and_top_of_slot=z_distance_bw_top_of_grasped_book_and_top_of_slot,
-            not_toppled=not_toppled,
-            top_within_slot=top_within_slot,
-            bottom_within_slot=bottom_within_slot,
-            )
+        if not self.suppress_evaluation:
+            not_toppled = ~self.any_env_books_toppled
+            bottom_within_slot = self.bottom_of_grasped_book_within_slot
+            top_within_slot = self.top_of_grasped_book_within_slot
+            z_distance_bw_top_of_grasped_book_and_top_of_slot = self.z_distance_between_top_of_grasped_book_and_top_of_slot
+            close_to_top_of_slot = z_distance_bw_top_of_grasped_book_and_top_of_slot < self.success_criteria_params['top_of_grasped_book_distance_to_top_of_slot_threshold']
+            transient_success = torch.logical_and(
+                not_toppled, torch.logical_and(
+                    bottom_within_slot, torch.logical_and(
+                        top_within_slot, 
+                            close_to_top_of_slot)))
+            success_in_a_row = torch.logical_and(transient_success, self.last_eval_bool)
+            self.elapsed_success_duration += success_in_a_row.float() * self.time_between_env_steps
+            self.elapsed_success_duration *= transient_success.float() # reset to 0 if not transient success
+            success = self.elapsed_success_duration > self.success_criteria_params['success_duration_threshold']
+            self.last_eval_bool = transient_success
+            return dict(
+                success=success,
+                transient_success=transient_success, 
+                elapsed_success_duration=self.elapsed_success_duration,
+                z_distance_bw_top_of_grasped_book_and_top_of_slot=z_distance_bw_top_of_grasped_book_and_top_of_slot,
+                not_toppled=not_toppled,
+                top_within_slot=top_within_slot,
+                bottom_within_slot=bottom_within_slot,
+                )
+        else:
+            return dict()
 

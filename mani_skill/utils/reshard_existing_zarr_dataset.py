@@ -9,6 +9,12 @@ from tqdm import tqdm
 import numcodecs
 import concurrent.futures
 #%%
+# path_to_zarr = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250414_150003.zarr')
+path_to_zarr = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250414_161301.zarr')
+
+assert path_to_zarr.exists()
+zarr_root = zarr.open(str(path_to_zarr), mode='r')
+#%%
 path_to_existing_zarr = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/413_sim_demos_left_of_4th_book_20hz_act/demos.zarr')
 assert path_to_existing_zarr.exists()
 # %%

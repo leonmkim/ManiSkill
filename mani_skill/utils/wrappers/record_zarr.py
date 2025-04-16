@@ -37,7 +37,6 @@ from mani_skill.utils.wrappers import CPUGymWrapper
 # NOTE (stao): The code for record.py is quite messy and perhaps confusing as it is trying to support both recording on CPU and GPU seamlessly
 # and handle partial resets. It works but can be claned up a lot.
 
-
 def parse_env_info(env: gym.Env):
     # spec can be None if not initialized from gymnasium.make
     env = env.unwrapped
@@ -80,7 +79,7 @@ def clean_trajectories(
     """
     json_episodes = json_dict["episodes"]
     # assert len(h5_file) == len(json_episodes)
-    assert len(zarr_root['meta']['episode_ends'][:]) == len(json_episodes)
+    assert zarr_root['meta']['episode_ends'].shape[0] == len(json_episodes)
 
     # Assumes each trajectory is named "traj_{i}"
     prefix_length = len("traj_")
@@ -268,6 +267,7 @@ class RecordEpisodeZarr(gym.Wrapper):
         source_desc: Optional[str] = None,
         store_in_memory: bool = True,
         zarr_compression_level: int = 3,
+        zarr_shard_factor: int = 1,
         eval_mode: bool = False,
     ) -> None:
         super().__init__(env)
@@ -319,7 +319,10 @@ class RecordEpisodeZarr(gym.Wrapper):
             self.data_group = self.zarr_root.create_group("data")
             self.meta_group = self.zarr_root.create_group("meta")
 
-            self.zarr_compressor = blosc.Blosc(cname="zstd", clevel=zarr_compression_level, shuffle=1)
+            # self.zarr_compressor = blosc.Blosc(cname="zstd", clevel=zarr_compression_level, shuffle=1)
+            self.zarr_compressor = None if zarr_compression_level == 0 else zarr.codecs.BloscCodec(cname='zstd', clevel=zarr_compression_level, shuffle=zarr.codecs.BloscShuffle.shuffle)
+
+            self.shard_factor = zarr_shard_factor # set to 1 for no sharding
 
             # self._trajectory_buffer = None
 
@@ -800,9 +803,9 @@ class RecordEpisodeZarr(gym.Wrapper):
             env_idxs_to_flush = np.arange(0, self.num_envs)
         for env_idx in env_idxs_to_flush:
             # start_ptr = self._trajectory_buffer.env_episode_ptr[env_idx]
-            start_ptr = self._trajectory_buffer.meta['env_episode_ptr'][env_idx]
+            start_ptr = self._trajectory_buffer['meta']['env_episode_ptr'][env_idx]
             # end_ptr = len(self._trajectory_buffer.done)
-            end_ptr = len(self._trajectory_buffer.meta['done'])
+            end_ptr = self._trajectory_buffer['meta']['done'].shape[0]
             if ignore_empty_transition and end_ptr - start_ptr <= 1:
                 continue
             flush_count += 1
@@ -869,7 +872,12 @@ class RecordEpisodeZarr(gym.Wrapper):
                             recursive_copy_memory_store_to_disk(data[k], disk_group[key], k, env_idx)
                     elif isinstance(data, zarr.Array):
                         if key not in disk_group:
-                            disk_group.create_dataset(key, shape=(0,) + data.shape[2:], dtype=data.dtype, chunks=(1,) + data.shape[2:], overwrite=True, compressor=self.zarr_compressor)
+                            if self.shard_factor > 1:
+                                shard_shape = (self.shard_factor,) + data.shape[2:]
+                            else:
+                                shard_shape = None
+                            # for recording demos, num_envs should always be 1 and we don't need to store this dimension, hence the 2:
+                            disk_group.create_dataset(key, shape=(0,) + data.shape[2:], dtype=data.dtype, chunks=(1,) + data.shape[2:], shards=shard_shape, overwrite=True, compressor=self.zarr_compressor)
                         disk_group[key].append(data[start_ptr:end_ptr, env_idx])
                     else:
                         raise ValueError(f"Data type {type(data)} not supported for recursive_copy_memory_store_to_disk")
@@ -924,15 +932,15 @@ class RecordEpisodeZarr(gym.Wrapper):
                 #     (slice(start_ptr + 1, end_ptr), env_idx),
                 # )
 
-                self._trajectory_buffer.data['action'] = self._trajectory_buffer.data['action'][start_ptr + 1 : end_ptr]
+                self._trajectory_buffer['data']['action'] = self._trajectory_buffer['data']['action'][start_ptr + 1 : end_ptr]
                 # terminated = self._trajectory_buffer.terminated[
                 #     start_ptr + 1 : end_ptr, env_idx
                 # ]
-                self._trajectory_buffer.data['terminated'] = self._trajectory_buffer.data['terminated'][start_ptr + 1 : end_ptr]
+                self._trajectory_buffer['data']['terminated'] = self._trajectory_buffer['data']['terminated'][start_ptr + 1 : end_ptr]
                 # truncated = self._trajectory_buffer.truncated[
                 #     start_ptr + 1 : end_ptr, env_idx
                 # ]
-                self._trajectory_buffer.data['truncated'] = self._trajectory_buffer.data['truncated'][start_ptr + 1 : end_ptr]
+                self._trajectory_buffer['data']['truncated'] = self._trajectory_buffer['data']['truncated'][start_ptr + 1 : end_ptr]
                 # if isinstance(self._trajectory_buffer.action, dict):
                 #     recursive_add_to_h5py(group, actions, "actions")
                 # else:
@@ -951,10 +959,10 @@ class RecordEpisodeZarr(gym.Wrapper):
                 #     episode_info.update(
                 #         success=self._trajectory_buffer.success[end_ptr - 1, env_idx]
                 #     )
-                if 'success' in self._trajectory_buffer.data:
-                    self._trajectory_buffer.data['success'] = self._trajectory_buffer.data['success'][start_ptr + 1 : end_ptr]
+                if 'success' in self._trajectory_buffer['data']:
+                    self._trajectory_buffer['data']['success'] = self._trajectory_buffer['data']['success'][start_ptr + 1 : end_ptr]
                     episode_info.update(
-                        success=self._trajectory_buffer.data['success'][end_ptr - 1]
+                        success=self._trajectory_buffer['data']['success'][end_ptr - 1]
                     )
                 # if self._trajectory_buffer.fail is not None:
                 #     group.create_dataset(
@@ -967,10 +975,10 @@ class RecordEpisodeZarr(gym.Wrapper):
                 #     episode_info.update(
                 #         fail=self._trajectory_buffer.fail[end_ptr - 1, env_idx]
                 #     )
-                if 'fail' in self._trajectory_buffer.data:
-                    self._trajectory_buffer.data['fail'] = self._trajectory_buffer.data['fail'][start_ptr + 1 : end_ptr]
+                if 'fail' in self._trajectory_buffer['data']:
+                    self._trajectory_buffer['data']['fail'] = self._trajectory_buffer['data']['fail'][start_ptr + 1 : end_ptr]
                     episode_info.update(
-                        fail=self._trajectory_buffer.data['fail'][end_ptr - 1, env_idx]
+                        fail=self._trajectory_buffer['data']['fail'][end_ptr - 1, env_idx]
                     )
                 # if self.record_env_state:
                 #     recursive_add_to_h5py(
@@ -984,45 +992,45 @@ class RecordEpisodeZarr(gym.Wrapper):
                 #         ],
                 #         dtype=np.float32,
                 #     )
-                if self.record_reward and 'reward' in self._trajectory_buffer.data:
-                    self._trajectory_buffer.data['reward'] = self._trajectory_buffer.data['reward'][start_ptr + 1 : end_ptr]
+                if self.record_reward and 'reward' in self._trajectory_buffer['data']:
+                    self._trajectory_buffer['data']['reward'] = self._trajectory_buffer['data']['reward'][start_ptr + 1 : end_ptr]
 
                 # should trim the final observation/state as there is no corresponding action that follows from it.
                 # get all keys that start with observation.
-                observation_keys = [k for k in self._trajectory_buffer.data.keys() if k.startswith('observation.')]
+                observation_keys = [k for k in self._trajectory_buffer['data'].keys() if k.startswith('observation.')]
                 for k in observation_keys:
-                    self._trajectory_buffer.data[k] = self._trajectory_buffer.data[k][start_ptr:end_ptr-1]
+                    self._trajectory_buffer['data'][k] = self._trajectory_buffer['data'][k][start_ptr:end_ptr-1]
 
                 # move contact features to new 'gt_contact' group
-                if 'gt_contact' not in self._trajectory_buffer.data:
-                    self._trajectory_buffer.data.create_group('gt_contact')
-                self.move_zarr_array_to_new_group(self._trajectory_buffer.data, self._trajectory_buffer.data['gt_contact'], 'observation.contact_map')
-                self.move_zarr_array_to_new_group(self._trajectory_buffer.data, self._trajectory_buffer.data['gt_contact'], 'observation.contact_positions')
+                if 'gt_contact' not in self._trajectory_buffer['data']:
+                    self._trajectory_buffer['data'].create_group('gt_contact')
+                self.move_zarr_array_to_new_group(self._trajectory_buffer['data'], self._trajectory_buffer['data']['gt_contact'], 'observation.contact_map')
+                self.move_zarr_array_to_new_group(self._trajectory_buffer['data'], self._trajectory_buffer['data']['gt_contact'], 'observation.contact_positions')
 
                 # move segmentation masks to new 'gt_segmentation' group
-                if 'gt_segmentation' not in self._trajectory_buffer.data:
-                    self._trajectory_buffer.data.create_group('gt_segmentation')
-                self.move_zarr_array_to_new_group(self._trajectory_buffer.data, self._trajectory_buffer.data['gt_segmentation'], 'observation.segmentation')
+                if 'gt_segmentation' not in self._trajectory_buffer['data']:
+                    self._trajectory_buffer['data'].create_group('gt_segmentation')
+                self.move_zarr_array_to_new_group(self._trajectory_buffer['data'], self._trajectory_buffer['data']['gt_segmentation'], 'observation.segmentation')
 
                 # post-process segmentation mask
-                self.extract_individual_segmentation_masks(self._trajectory_buffer.data.gt_segmentation, segmentation_id_map)
+                self.extract_individual_segmentation_masks(self._trajectory_buffer['data']['gt_segmentation'], segmentation_id_map)
 
                 recursive_copy_memory_store_to_disk(self._trajectory_buffer["data"], self.zarr_root, 'data', env_idx)
 
                 if 'episode_ends' not in self.meta_group:
                     self.meta_group.create_dataset('episode_ends', shape=(0,), dtype=np.int32, chunks=(1,), overwrite=True)
                 prev_episode_end = 0
-                if len(self.meta_group['episode_ends']) > 0:
+                if self.meta_group['episode_ends'].shape[0] > 0:
                     prev_episode_end = self.meta_group['episode_ends'][-1]
                 self.meta_group['episode_ends'].append(np.array([end_ptr - start_ptr - 1 + prev_episode_end], dtype=np.int32))
 
                 if 'episode_cam_K' not in self.meta_group:
                     self.meta_group.create_dataset('episode_cam_K', shape=(0,) + (3, 3), dtype=np.float32, chunks=(1,) + (3, 3), overwrite=True)
-                self.meta_group['episode_cam_K'].append(self._trajectory_buffer.meta['episode_cam_K'][env_idx])
+                self.meta_group['episode_cam_K'].append(self._trajectory_buffer['meta']['episode_cam_K'][env_idx])
 
                 if 'episode_cam_tf_world' not in self.meta_group:
                     self.meta_group.create_dataset('episode_cam_tf_world', shape=(0,) + (4, 4), dtype=np.float32, chunks=(1,) + (4, 4), overwrite=True)
-                self.meta_group['episode_cam_tf_world'].append(self._trajectory_buffer.meta['episode_cam_tf_world'][env_idx])
+                self.meta_group['episode_cam_tf_world'].append(self._trajectory_buffer['meta']['episode_cam_tf_world'][env_idx])
 
                 # NOTE: done and env states are not trimmed
 
@@ -1044,9 +1052,9 @@ class RecordEpisodeZarr(gym.Wrapper):
             # # self._trajectory_buffer.env_episode_ptr[env_idxs_to_flush] = (
             # #     len(self._trajectory_buffer.done) - 1
             # # )
-            # self._trajectory_buffer.meta['env_episode_ptr'][env_idxs_to_flush] = len(self._trajectory_buffer.meta.done) - 1
+            # self._trajectory_buffer['meta']['env_episode_ptr'][env_idxs_to_flush] = len(self._trajectory_buffer.meta.done) - 1
             # # min_env_ptr = self._trajectory_buffer.env_episode_ptr.min()
-            # min_env_ptr = np.min(self._trajectory_buffer.meta['env_episode_ptr'])
+            # min_env_ptr = np.min(self._trajectory_buffer['meta']['env_episode_ptr'])
             # # N = len(self._trajectory_buffer.done)
             # N = len(self._trajectory_buffer.meta.done)
 
@@ -1094,7 +1102,7 @@ class RecordEpisodeZarr(gym.Wrapper):
 
             # recursive_flush_trajectory_buffer(self._trajectory_buffer["data"], min_env_ptr, N)
             # # self._trajectory_buffer.env_episode_ptr -= min_env_ptr
-            # self._trajectory_buffer.meta['env_episode_ptr'] -= min_env_ptr
+            # self._trajectory_buffer['meta']['env_episode_ptr'] -= min_env_ptr
 
             self._trajectory_buffer = None
 
