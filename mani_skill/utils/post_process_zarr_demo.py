@@ -43,13 +43,13 @@ def recursive_trim_trimmed_arrays(demo_data: ZarrGroup,
                                   pretrimmed: bool = True):
     # pretrimmed refers to fact that the non state arrays under actors/articulations groups have been trimmed to exclude one frame per episode (first frame for action, and last frame for observations)
     for key in demo_data.keys():
-        if isinstance(demo_data[key], ZarrArray) and not key.endswith('_tmp'):
+        if isinstance(demo_data[key], ZarrArray) and not key.endswith('_tmp') and not key == 'start':
             if f'{key}_tmp' not in demo_data:
                 demo_data.create_array(f'{key}_tmp', shape=(0, *demo_data[key].shape[1:]), dtype=demo_data[key].dtype, chunks=(1, *demo_data[key].shape[1:]), compressors=demo_data[key].compressors)
-                if pretrimmed:
-                    demo_data[f'{key}_tmp'].append(demo_data[key][new_episode_start:new_episode_end])
-                else:
-                    demo_data[f'{key}_tmp'].append(demo_data[key][new_untrimmed_episode_start:new_untrimmed_episode_end])
+            if pretrimmed:
+                demo_data[f'{key}_tmp'].append(demo_data[key][new_episode_start:new_episode_end])
+            else:
+                demo_data[f'{key}_tmp'].append(demo_data[key][new_untrimmed_episode_start:new_untrimmed_episode_end])
         elif isinstance(demo_data[key], ZarrGroup):
             if key in ['actors', 'articulations']:
                 recursive_trim_trimmed_arrays(demo_data[key], new_episode_start, new_episode_end, new_untrimmed_episode_start, new_untrimmed_episode_end, pretrimmed=False)
@@ -63,6 +63,7 @@ def recursive_delete_non_tmp_arrays(demo_data: ZarrGroup):
             del demo_data[key]
         elif isinstance(demo_data[key], ZarrGroup):
             recursive_delete_non_tmp_arrays(demo_data[key])
+
 def rename_zarr_array(demo_data: ZarrGroup, old_key: str, new_key: str, copy_over_n_chunks_at_a_time: int = 500):
     if old_key in demo_data:
         # demo_data.move(old_key, new_key)
@@ -176,6 +177,7 @@ def recursive_assert_structure(base_demo, new_demo):
             recursive_assert_structure(base_demo[key], new_demo[key])
 
 def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths: list):
+    post_process_logger.info(f"Merging {len(demos_to_add_to_base_paths)} demos into base demo {base_demo_path.name}...")
     base_demo = zarr.open(base_demo_path, mode='r+')
     base_meta_json_path = base_demo_path.with_suffix('.json')
     with open(base_meta_json_path, 'r') as f:
@@ -279,141 +281,157 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 
 # traverse_tree(demo)
 #%%
-# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250414_161301.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/4_sim_demos_leftof4thbook_bookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
 # assert base_demo_path.exists()
-# # base_demo_num_episodes = 10
+# # # # base_demo_num_episodes = 10
 # base_demo = zarr.open(base_demo_path, 'r')
-# for i, episode_id in enumerate(base_demo['meta']['ep_ids'][:]):
-#     episode_id_string = episode_id.decode('utf-8')
-#     assert episode_id_string.startswith('traj_')
-#     current_episode_id = int(episode_id_string.split('_')[-1])
-#     new_episode_id = f'traj_{current_episode_id + base_demo_num_episodes}'
-#     print(f"old: {episode_id_string.encode('utf-8')} new: {new_episode_id.encode('utf-8')}")
-#     # new_demo['meta']['ep_ids'][i] = new_episode_id.encode('utf-8')
+# episode_idx = 2
+# episode_start_idx = 0 if episode_idx == 0 else base_demo['meta']['episode_ends'][episode_idx - 1]
+# episode_end_idx = base_demo['meta']['episode_ends'][episode_idx]
+# episode_start = base_demo['data']['start'][episode_start_idx:episode_end_idx]
+# if np.any(episode_start):
+#     start_idx = np.argwhere(episode_start)[0][0]
+#     color_frame_at_start = base_demo['data']['observation.rgb'][episode_start_idx:episode_end_idx][start_idx]
+#     plt.imshow(color_frame_at_start)
+# # for i, episode_id in enumerate(base_demo['meta']['ep_ids'][:]):
+# #     episode_id_string = episode_id.decode('utf-8')
+# #     assert episode_id_string.startswith('traj_')
+# #     current_episode_id = int(episode_id_string.split('_')[-1])
+# #     new_episode_id = f'traj_{current_episode_id + base_demo_num_episodes}'
+# #     print(f"old: {episode_id_string.encode('utf-8')} new: {new_episode_id.encode('utf-8')}")
+# #     # new_demo['meta']['ep_ids'][i] = new_episode_id.encode('utf-8')
 #%%
-path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/240_sim_demos_left_of_4th_book_bookends_no_env_rand_20hz_act/demos.zarr')
-demo = zarr.open(path_to_demo, mode='r+')
-path_to_demo_json = path_to_demo.with_suffix('.json')
-with open(path_to_demo_json, 'r') as f:
-    meta_json = json.load(f)
+# #################################################################################
+# correct datasets that were mangled by bug in my code which caused each array to be doubled and padded with zeros at the first half
+# #################################################################################
+# path_to_demo = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/240_sim_demos_left_of_4th_book_bookends_no_env_rand_20hz_act/demos.zarr')
+# demo = zarr.open(path_to_demo, mode='r+')
+# path_to_demo_json = path_to_demo.with_suffix('.json')
+# with open(path_to_demo_json, 'r') as f:
+#     meta_json = json.load(f)
 
-# num_episodes = len(demo['meta']['episode_ends'][:])
-first_half_num_episodes = 151 + 1
-actual_num_episodes = demo['meta']['episode_ends'].shape[0]
+# # num_episodes = len(demo['meta']['episode_ends'][:])
+# first_half_num_episodes = 151 + 1
+# actual_num_episodes = demo['meta']['episode_ends'].shape[0]
 
-to_remove_start_idx = demo['meta']['episode_ends'][151]
-to_remove_end_idx = demo['meta']['episode_ends'][-1]
-env_state_to_remove_start_idx = demo['meta']['episode_ends'][151] + first_half_num_episodes
-env_state_to_remove_end_idx = demo['meta']['episode_ends'][-1] + actual_num_episodes
+# to_remove_start_idx = demo['meta']['episode_ends'][151]
+# to_remove_end_idx = demo['meta']['episode_ends'][-1]
+# env_state_to_remove_start_idx = demo['meta']['episode_ends'][151] + first_half_num_episodes
+# env_state_to_remove_end_idx = demo['meta']['episode_ends'][-1] + actual_num_episodes
 
-print(f"to_remove_start_idx: {to_remove_start_idx} to_remove_end_idx: {to_remove_end_idx} env_state_to_remove_start_idx: {env_state_to_remove_start_idx} env_state_to_remove_end_idx: {env_state_to_remove_end_idx}")
-print(f"new length will be {demo['data']['observation.rgb'].shape[0] - (to_remove_end_idx - to_remove_start_idx)}")
+# print(f"to_remove_start_idx: {to_remove_start_idx} to_remove_end_idx: {to_remove_end_idx} env_state_to_remove_start_idx: {env_state_to_remove_start_idx} env_state_to_remove_end_idx: {env_state_to_remove_end_idx}")
+# print(f"new length will be {demo['data']['observation.rgb'].shape[0] - (to_remove_end_idx - to_remove_start_idx)}")
+# #%%
+# correct_faulty_trimming(demo['data'], to_remove_start_idx, to_remove_end_idx, env_state_to_remove_start_idx, env_state_to_remove_end_idx)
+# recursive_delete_non_tmp_arrays(demo['data'])
+# assert all_arrays_are_tmp(demo['data']), "Not all arrays are tmp arrays"
+# recursive_rename_tmp_arrays(demo['data'])
+
 #%%
-correct_faulty_trimming(demo['data'], to_remove_start_idx, to_remove_end_idx, env_state_to_remove_start_idx, env_state_to_remove_end_idx)
-recursive_delete_non_tmp_arrays(demo['data'])
-assert all_arrays_are_tmp(demo['data']), "Not all arrays are tmp arrays"
-recursive_rename_tmp_arrays(demo['data'])
+# # # create video for first episode
+# episode_idx = 238
+# num_episodes = demo['meta']['episode_ends'].shape[0]
 
-#%%
-# # create video for first episode
-episode_idx = 238
-num_episodes = demo['meta']['episode_ends'].shape[0]
+# episode_start = demo['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
+# env_state_episode_start = episode_start + episode_idx
+# # episode_start += demo['meta']['episode_ends'][-1]
+# # env_state_episode_start += demo['meta']['episode_ends'][-1] + num_episodes
+# episode_end = demo['meta']['episode_ends'][episode_idx]
+# env_state_episode_end = episode_end + episode_idx + 1
+# # episode_end += demo['meta']['episode_ends'][-1]
+# # env_state_episode_end += demo['meta']['episode_ends'][-1] + num_episodes
 
-episode_start = demo['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
-env_state_episode_start = episode_start + episode_idx
-# episode_start += demo['meta']['episode_ends'][-1]
-# env_state_episode_start += demo['meta']['episode_ends'][-1] + num_episodes
-episode_end = demo['meta']['episode_ends'][episode_idx]
-env_state_episode_end = episode_end + episode_idx + 1
-# episode_end += demo['meta']['episode_ends'][-1]
-# env_state_episode_end += demo['meta']['episode_ends'][-1] + num_episodes
+# rgb_frames = demo['data']['observation.rgb'][episode_start:episode_end]
 
-rgb_frames = demo['data']['observation.rgb'][episode_start:episode_end]
+# print(f"episode_start: {episode_start} episode_end: {episode_end} env_state_episode_start: {env_state_episode_start} env_state_episode_end: {env_state_episode_end}")
+# print(f"episode_length: {episode_end - episode_start} env_state_episode_length: {env_state_episode_end - env_state_episode_start}")
 
-print(f"episode_start: {episode_start} episode_end: {episode_end} env_state_episode_start: {env_state_episode_start} env_state_episode_end: {env_state_episode_end}")
-print(f"episode_length: {episode_end - episode_start} env_state_episode_length: {env_state_episode_end - env_state_episode_start}")
-
-# from matplotlib import pyplot as plt
-# plt.imshow(demo['data']['observation.rgb'][27630])
-# create a video from the rgb frames
-images_to_video(
-    images=rgb_frames,
-    output_dir='./',
-    video_name=f'episode_{episode_idx}_video',
-    fps=20,
-)
+# # from matplotlib import pyplot as plt
+# # plt.imshow(demo['data']['observation.rgb'][27630])
+# # create a video from the rgb frames
+# images_to_video(
+#     images=rgb_frames,
+#     output_dir='./',
+#     video_name=f'episode_{episode_idx}_video',
+#     fps=20,
+# )
 #%%
 #%%
 # #################################################################################
 # trim each dataset using thresholds on velocity and gripper action
 # #################################################################################
 
-# dataset_name = 'sim_demos_left_of_4th_book_bookends_no_env_rand_20hz_act'
+dataset_name = 'sim_demos_leftof4thbook_bookends_nograspedrand_noenvrand_slotrand_20hz_act'
 
-# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250415_171827.zarr')
-# assert base_demo_path.exists()
-# base_demo_path = base_demo_path.expanduser()
-# demos_to_add_to_base_paths = [
-#     Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250415_171942.zarr'),
-# ]
-# for demo_path in demos_to_add_to_base_paths:
-#     assert demo_path.exists()
-#     demo_path = demo_path.expanduser()
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250422_134311.zarr')
+assert base_demo_path.exists()
+base_demo = zarr.open(base_demo_path, mode='r')
+base_demo_path = base_demo_path.expanduser()
+demos_to_add_to_base_paths = list()
+for demo_path in demos_to_add_to_base_paths:
+    assert demo_path.exists()
+    demo_path = demo_path.expanduser()
+#%%
 
-# all_demo_paths = [base_demo_path] + demos_to_add_to_base_paths
-# for path_to_demo in all_demo_paths:
-#     path_to_demo = path_to_demo.expanduser()
-#     demo = zarr.open(path_to_demo, mode='r+')
+all_demo_paths = [base_demo_path] + demos_to_add_to_base_paths
+for path_to_demo in all_demo_paths:
+    path_to_demo = path_to_demo.expanduser()
+    demo = zarr.open(path_to_demo, mode='r+')
 
-#     path_to_json = path_to_demo.with_suffix('.json')
-#     with open(path_to_json, 'r') as f:
-#         meta_json = json.load(f)
-#     num_episodes = len(demo['meta']['episode_ends'][:])
-#     assert num_episodes == len(meta_json['episodes'])
+    path_to_json = path_to_demo.with_suffix('.json')
+    with open(path_to_json, 'r') as f:
+        meta_json = json.load(f)
+    num_episodes = len(demo['meta']['episode_ends'][:])
+    assert num_episodes == len(meta_json['episodes'])
 
-# #     trim_start_and_end_of_trajectories(demo, meta_json, path_to_json, total_action_norm_threshold=.005)
+    trim_start_and_end_of_trajectories(demo, meta_json, path_to_json, total_action_norm_threshold=.005)
 
-# #%%
-# # ###########################
-# # merge datasets together
-# # ###########################
+#%%
+# ###########################
+# merge datasets together
+# ###########################
 
-# merge_demos_into_base_demo(base_demo_path, demos_to_add_to_base_paths)
+if len(demos_to_add_to_base_paths) > 0:
+    merge_demos_into_base_demo(base_demo_path, demos_to_add_to_base_paths)
 
-# demo = zarr.open(base_demo_path, mode='r+')
-# meta_json = json.load(open(base_demo_path.with_suffix('.json'), 'r'))
+# ###########################
+# change the dataset name and location
+# ###########################
 
-# # add some needed meta attrs
-# max_demo_length = 0
-# for episode_dict in meta_json['episodes']:
-#     episode_length = episode_dict['elapsed_steps']
-#     if episode_length > max_demo_length:
-#         max_demo_length = episode_length
+demo = zarr.open(base_demo_path, mode='r+')
+meta_json = json.load(open(base_demo_path.with_suffix('.json'), 'r'))
 
-# meta_json['max_demo_length'] = max_demo_length
-# demo['meta'].attrs['max_demo_length'] = max_demo_length
-# # update the json file
-# with open(path_to_json, 'w') as f:
-#     json.dump(meta_json, f, indent=4)
+# add some needed meta attrs
+max_demo_length = 0
+for episode_dict in meta_json['episodes']:
+    episode_length = episode_dict['elapsed_steps']
+    if episode_length > max_demo_length:
+        max_demo_length = episode_length
 
-# # move the zarr and json file to a directory
-# # dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
-# total_num_demos = len(demo['meta']['episode_ends'][:])
-# dataset_name = f'{total_num_demos}_' + dataset_name
-# dataset_root_dir = base_demo_path.parent
+meta_json['max_demo_length'] = max_demo_length
+demo['meta'].attrs['max_demo_length'] = max_demo_length
+# update the json file
+with open(path_to_json, 'w') as f:
+    json.dump(meta_json, f, indent=4)
 
-# new_dataset_dir = dataset_root_dir / dataset_name
-# new_dataset_dir.mkdir(parents=True, exist_ok=True)
-# #%%
-# shutil.move(base_demo_path, new_dataset_dir)
-# shutil.move(base_demo_path.with_suffix('.json'), new_dataset_dir)
-# #%%
-# # rename the zarr to demos.zarr
-# new_demo_path = new_dataset_dir / base_demo_path.name
-# new_demo_path.rename(new_dataset_dir / 'demos.zarr')
-# #%%
-# # rename the json file to demos.json
-# new_json_path = new_dataset_dir / base_demo_path.with_suffix('.json').name
-# new_json_path.rename(new_dataset_dir / 'demos.json')
+# move the zarr and json file to a directory
+# dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
+total_num_demos = len(demo['meta']['episode_ends'][:])
+dataset_name = f'{total_num_demos}_' + dataset_name
+dataset_root_dir = base_demo_path.parent
 
-# #%%
+new_dataset_dir = dataset_root_dir / dataset_name
+new_dataset_dir.mkdir(parents=True, exist_ok=True)
+#%%
+shutil.move(base_demo_path, new_dataset_dir)
+shutil.move(base_demo_path.with_suffix('.json'), new_dataset_dir)
+#%%
+# rename the zarr to demos.zarr
+new_demo_path = new_dataset_dir / base_demo_path.name
+new_demo_path.rename(new_dataset_dir / 'demos.zarr')
+#%%
+# rename the json file to demos.json
+new_json_path = new_dataset_dir / base_demo_path.with_suffix('.json').name
+new_json_path.rename(new_dataset_dir / 'demos.json')
+
+#%%

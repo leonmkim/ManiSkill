@@ -16,6 +16,8 @@ from mani_skill.utils.visualization.misc import images_to_video
 from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
 
+from mani_skill.envs.tasks.tabletop.book_insertion import GraspedBookConfig, BookEndsConfig, EnvBooksConfig, SlotConfig
+
 import multiprocessing
 
 from pathlib import Path
@@ -44,13 +46,29 @@ env = gym.make(
     render_contact_map=False,
     render_dtc_maps=False,
     render_normals_maps=False,
-    spawn_new_env_books=False,
-    book_ends_dict=dict(
+    book_ends_config=BookEndsConfig(
         mode='dynamic',
         height=0.1,
         mass=3.5,
         friction=0.15,
-        color="#FFD289", # default color
+        color="#808080", # default color
+    ),
+    grasped_book_config=GraspedBookConfig(
+        randomize_color=False,
+        randomize_density=False,
+        randomize_length=False,
+        randomize_height=False,
+        randomize_width=False,
+    ),
+    env_books_config=EnvBooksConfig(
+        randomize_color=False,
+        randomize_density=False,
+        randomize_height=False,
+        randomize_length=False,
+        randomize_width=False,
+    ),
+    slot_config=SlotConfig(
+        y_randomization_bounds=[-0.05, 0.05],
     ),
     # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
@@ -72,7 +90,8 @@ env = gym.make(
         shader_pack="minimal"
     )
 )
-seed = 0
+# seed = 0
+seed = 1_000_000
 num_trajs = 0
 #%%
 sim_dt = 1.0 / env.sim_config.sim_freq
@@ -113,7 +132,7 @@ while True:
     start_time = time.perf_counter()
     while True:
         # action = env.action_space.sample()
-        action = spacemouse_input.get_action()
+        action, _ = spacemouse_input.get_action()
         obs, reward, terminated, truncated, info = env.step(action)
 
         env.render_human()

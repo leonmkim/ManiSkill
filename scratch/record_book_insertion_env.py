@@ -15,6 +15,7 @@ from mani_skill.trajectory.utils import index_dict, dict_to_list_of_dicts
 from mani_skill.utils.visualization.misc import images_to_video
 from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
+from mani_skill.envs.tasks.tabletop.book_insertion import GraspedBookConfig, BookEndsConfig, EnvBooksConfig, SlotConfig
 
 from pathlib import Path
 
@@ -27,12 +28,12 @@ from mani_skill.utils.teleoperation import SpacemouseInput
 import logging
 record_logger = logging.getLogger("record_logger")
 
-
 #%%
 spacemouse_input = SpacemouseInput()
 desired_viewing_size = (256, 256)
 output_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop")
 record_demonstrations = True
+record_video = False
 
 #%%
 ## testing book insertion task
@@ -49,14 +50,30 @@ env = gym.make(
     render_contact_map=True,
     render_dtc_maps=False,
     render_normals_maps=False,
-    spawn_new_env_books=False,
     suppress_evaluation=True,
-    book_ends_dict=dict(
+    book_ends_config=BookEndsConfig(
         mode='dynamic',
         height=0.1,
         mass=3.5,
         friction=0.15,
         color="#808080", # default color
+    ),
+    grasped_book_config=GraspedBookConfig(
+        randomize_color=False,
+        randomize_density=False,
+        randomize_length=False,
+        randomize_height=False,
+        randomize_width=False,
+    ),
+    env_books_config=EnvBooksConfig(
+        randomize_color=False,
+        randomize_density=False,
+        randomize_height=False,
+        randomize_length=False,
+        randomize_width=False,
+    ),
+    slot_config=SlotConfig(
+        y_randomization_bounds=[-0.05, 0.05],
     ),
     # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
@@ -83,7 +100,7 @@ if record_demonstrations:
     env = RecordEpisodeZarr(
         env,
         output_dir=output_dir,
-        save_video=False,
+        save_video=record_video,
         save_trajectory=True,
         info_on_video=False,
         record_reward=False,
@@ -144,8 +161,8 @@ while True:
     start_time = time.perf_counter()
     while True:
         # action = env.action_space.sample()
-        action = spacemouse_input.get_action()
-        obs, reward, terminated, truncated, info = env.step(action)
+        action, start_signal = spacemouse_input.get_action()
+        obs, reward, terminated, truncated, info = env.step(action, start_signal=start_signal)
 
         # env.render_human()
 

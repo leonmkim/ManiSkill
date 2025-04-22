@@ -28,7 +28,8 @@ class SpacemouseInput:
         self.rotation_factor = 0.15
 
         self.button_timeout = 0.4
-        self.last_button_press_time = time.perf_counter()
+        self.last_right_button_press_time = time.perf_counter()
+        self.last_left_button_press_time = time.perf_counter()
         
         self.manager = multiprocessing.Manager()
         self.current_spacemouse_state = self.manager.dict()
@@ -56,8 +57,17 @@ class SpacemouseInput:
                 
     def get_action(self):
         spacemouse_input = self.current_spacemouse_state
-        return self.spacemouse_input_function(spacemouse_input)
+        delta_pose = self.spacemouse_input_function(spacemouse_input)
+        start_signal = self.spacemouse_input_to_start_signal(spacemouse_input)
+        return delta_pose, start_signal
 
+    def spacemouse_input_to_start_signal(self, spacemouse_event):
+        start_signal = np.zeros((1,), dtype=bool)
+        if spacemouse_event['buttons'][0] and time.perf_counter() - self.last_left_button_press_time > self.button_timeout:
+            start_signal[0] = True
+            self.last_left_button_press_time = time.perf_counter()
+        return start_signal
+    
     def spacemouse_input_to_delta_pose(self, spacemouse_event):
         delta_pose = np.zeros(7)
         # delta_pose[0] = -spacemouse_event.y * self.translation_factor
@@ -66,9 +76,10 @@ class SpacemouseInput:
         delta_pose[3] = spacemouse_event['roll'] * self.rotation_factor
         # delta_pose[4] = spacemouse_event.pitch * self.rotation_factor
         # delta_pose[5] = spacemouse_event.yaw * self.rotation_factor
-        if spacemouse_event['buttons'][1] and time.perf_counter() - self.last_button_press_time > self.button_timeout:
+        if spacemouse_event['buttons'][1] and time.perf_counter() - self.last_right_button_press_time > self.button_timeout:
             self.gripper_action = -self.gripper_action
-            self.last_button_press_time = time.perf_counter()
+            self.last_right_button_press_time = time.perf_counter()
+        
         delta_pose[6] = self.gripper_action
 
         return delta_pose

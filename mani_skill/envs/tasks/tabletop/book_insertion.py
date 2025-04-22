@@ -107,7 +107,7 @@ def _build_book(
     binding_thickness, cover_thickness, cover_overhang,
     book_color="#FFD289", 
     density=0.705,
-):
+    ):
     if isinstance(book_color, str):
         book_color = sapien_utils.hex2rgba(book_color)
 
@@ -170,6 +170,92 @@ def _build_book_end(
     builder.add_box_visual(pose, half_size, material=viz_mat)
     return builder
 
+from dataclasses import dataclass, field
+
+@dataclass
+class EnvBooksConfig:
+    """
+    Configuration for the env books in the BookInsertionEnv.
+    """
+    num_env_books: int = 8
+    randomize_color: bool = True
+    randomize_density: bool = True
+    density_randomization_bounds: list = field(default_factory=lambda: [655, 1015])
+    randomize_height: bool = True
+    height_randomization_bounds: list = field(default_factory=lambda: [0.2475, 0.2525])
+    randomize_width: bool = True
+    width_randomization_bounds: list = field(default_factory=lambda: [0.015, 0.05])
+    randomize_length: bool = True
+    length_randomization_bounds: list = field(default_factory=lambda: [0.15, 0.2])
+    shuffle_mode: str = 'none'
+
+    def __post_init__(self):
+        any_randomize = any([
+            self.randomize_color,
+            self.randomize_density,
+            self.randomize_height,
+            self.randomize_width,
+            self.randomize_length,
+        ])
+        assert not (self.shuffle_mode != 'none' and any_randomize), "Cannot shuffle env books and randomize at the same time"
+        assert self.shuffle_mode in ['none', 'left', 'right', 'all'], f"shuffle_env_books_mode must be one of ['none', 'left', 'right', 'all'], but got {self.shuffle_mode}"
+        assert self.density_randomization_bounds[1] > self.density_randomization_bounds[0], f"density_randomization_bounds must be in the form [min, max], but got {self.density_randomization_bounds}"
+        assert self.height_randomization_bounds[1] > self.height_randomization_bounds[0], f"height_randomization_bounds must be in the form [min, max], but got {self.height_randomization_bounds}"
+        assert self.width_randomization_bounds[1] > self.width_randomization_bounds[0], f"width_randomization_bounds must be in the form [min, max], but got {self.width_randomization_bounds}"
+        assert self.length_randomization_bounds[1] > self.length_randomization_bounds[0], f"length_randomization_bounds must be in the form [min, max], but got {self.length_randomization_bounds}"
+        assert self.num_env_books > 0, f"num_env_books must be greater than 0, but got {self.num_env_books}"
+
+@dataclass
+class RobotConfig:
+    """
+    Configuration for the robot in the BookInsertionEnv.
+    """
+    init_qpos: list = field(default_factory=lambda: [0.022516679397616424, 0.11646689505116431, -0.3625673227601117, -1.37265637618617, 0.033468631741809286, 1.4658307538809252, 0.46052758571920294,.04,.04,])
+    # additive_y_randomization_bounds: Union[float, list] = 0.0
+
+@dataclass
+class SlotConfig:
+    """
+    Configuration for the slot in the BookInsertionEnv.
+    """
+    negative_tolerance: float = 0.0035
+    left_of_book_index: int = 4
+    y_randomization_bounds: Union[float, list] = 0.0
+
+@dataclass
+class GraspedBookConfig:
+    """
+    Configuration for the grasped book in the BookInsertionEnv.
+    """
+    randomize_color: bool = True
+    randomize_density: bool = True
+    density_randomization_bounds: list = field(default_factory=lambda: [650, 850])
+    randomize_height: bool = True
+    height_randomization_bounds: list = field(default_factory=lambda: [0.165, 0.25])
+    randomize_width: bool = True
+    width_randomization_bounds: list = field(default_factory=lambda: [0.03, 0.065])
+    randomize_length: bool = True
+    length_randomization_bounds: list = field(default_factory=lambda: [0.1, 0.15])
+
+    def __post_init__(self):
+        assert self.density_randomization_bounds[1] > self.density_randomization_bounds[0], f"density_randomization_bounds must be in the form [min, max], but got {self.density_randomization_bounds}"
+        assert self.height_randomization_bounds[1] > self.height_randomization_bounds[0], f"height_randomization_bounds must be in the form [min, max], but got {self.height_randomization_bounds}"
+        assert self.width_randomization_bounds[1] > self.width_randomization_bounds[0], f"width_randomization_bounds must be in the form [min, max], but got {self.width_randomization_bounds}"
+        assert self.length_randomization_bounds[1] > self.length_randomization_bounds[0], f"length_randomization_bounds must be in the form [min, max], but got {self.length_randomization_bounds}"
+
+@dataclass
+class BookEndsConfig:
+    """
+    Configuration for the book ends in the BookInsertionEnv.
+    """
+    mode: str = 'none'
+    height: float = 0.25
+    mass: float = 0.5
+    color: str = "#FFD289" # default color
+    friction: float = 0.3 # default friction for sapien objects is 0.3
+    
+    def __post_init__(self):
+        assert self.mode in ['none', 'static', 'dynamic'], f"book_ends_mode must be one of ['none', 'static', 'dynamic'], but got {self.mode}"
 
 @register_env("BookInsertion-v0", max_episode_steps=100)
 class BookInsertionEnv(BaseEnv):
@@ -191,8 +277,6 @@ class BookInsertionEnv(BaseEnv):
     SUPPORTED_ROBOTS = ["panda"]
     agent: Union[Panda]
     
-    num_env_books: int = 8
-    slot_left_of_book_index: int = 4
 
     binding_thickness: float = 0.005
     cover_thickness: float = 0.003
@@ -213,17 +297,58 @@ class BookInsertionEnv(BaseEnv):
         success_duration_threshold=3.0, # seconds        
     )
 
-    spawn_new_env_books: bool = True
-    spawn_new_grasped_book: bool = True
-    shuffle_env_books_mode: str = 'none'
+    # num_env_books: int = 8
+    # spawn_new_env_books: bool = True
+    # shuffle_env_books_mode: str = 'none'
+    env_books_config: EnvBooksConfig = EnvBooksConfig()
+    # Dict[str, Any] = dict(
+    #     num_env_books=8,
+    #     randomize_color=True,
+    #     randomize_density=True,
+    #     density_randomization_bounds=[655, 1015],
+    #     randomize_height=True,
+    #     height_randomization_bounds=[0.2475, 0.2525],
+    #     randomize_width=True,
+    #     width_randomization_bounds=[0.015, 0.05],
+    #     randomize_length=True,
+    #     length_randomization_bounds=[0.15, 0.2],
+    #     shuffle_mode='none',
+    # )
 
-    book_ends_dict: Dict[str, Any] = dict(
-        mode='none',
-        height=0.25,
-        mass=0.5,
-        color="#FFD289", # default color
-        friction=0.3, # default friction for sapien objects is 0.3
-    )
+    robot_config: RobotConfig = RobotConfig()
+
+    # slot_left_of_book_index: int = 4
+    slot_config: SlotConfig = SlotConfig()
+    # Dict[str, Any] = dict(
+    #     negative_tolerance=0.0035,
+    #     left_of_book_index=4,
+    #     y_randomization_bounds=0,
+    # )
+
+    grasped_book_config: GraspedBookConfig = GraspedBookConfig()
+
+    # Dict[str, Any] = dict(
+    #     randomize_color=True,
+    #     randomize_density=True,
+    #     density_randomization_bounds=[650, 850],
+    #     randomize_height=True,
+    #     height_randomization_bounds=[0.165, 0.25],
+    #     randomize_width=True,
+    #     width_randomization_bounds=[0.03, 0.065],
+    #     randomize_length=True,
+    #     length_randomization_bounds=[0.1, 0.15],
+    # )
+    # spawn_new_grasped_book: bool = True
+
+    book_ends_config: BookEndsConfig = BookEndsConfig()
+
+    # Dict[str, Any] = dict(
+    #     mode='none',
+    #     height=0.25,
+    #     mass=0.5,
+    #     color="#FFD289", # default color
+    #     friction=0.3, # default friction for sapien objects is 0.3
+    # )
 
     suppress_evaluation: bool = False
     
@@ -265,10 +390,18 @@ class BookInsertionEnv(BaseEnv):
             if key in BookInsertionEnv.__dict__:
                 setattr(self, key, kwargs[key])
                 # del kwargs[key]
-        
-        assert self.book_ends_dict['mode'] in ['none', 'static', 'dynamic'], f"book_ends_mode must be one of ['none', 'static', 'dynamic'], but got {self.book_ends_dict['mode']}"
-        assert self.shuffle_env_books_mode in ['none', 'left', 'right', 'all'], f"shuffle_env_books_mode must be one of ['none', 'left', 'right', 'all'], but got {self.shuffle_env_books_mode}"
-        assert not (self.spawn_new_env_books and self.shuffle_env_books_mode != 'none'), "Cannot spawn new env books and shuffle at the same time"
+
+        self.grasped_book_colors = None
+        self.grasped_book_densities = None
+        self.grasped_book_heights = None
+        self.grasped_book_widths = None
+        self.grasped_book_lengths = None
+
+        self.env_book_colors = None
+        self.env_book_densities = None
+        self.env_book_heights = None
+        self.env_book_widths = None
+        self.env_book_lengths = None
 
         super().__init__(
             *args,
@@ -370,16 +503,39 @@ class BookInsertionEnv(BaseEnv):
             # self._hidden_objects.append(self.camera_pose)
             # <<<<<<<<< for debugging
 
-            if self.spawn_new_grasped_book or (not self.spawn_new_grasped_book and not self.new_grasped_book_is_spawned):
-                grasped_book_lengths = self._batched_episode_rng.uniform(0.1, 0.15)
-                grasped_book_widths = self._batched_episode_rng.uniform(0.03, 0.065) # max gripper width is .08
-                grasped_book_heights = self._batched_episode_rng.uniform(0.165, 0.25)
+            # if self.spawn_new_grasped_book or (not self.spawn_new_grasped_book and not self.new_grasped_book_is_spawned):
+            # if isinstance(self.grasped_book_dict['length_randomization_bounds'], list):
+            if self.grasped_book_config.randomize_length or self.grasped_book_lengths is None:
+                # grasped_book_lengths = self._batched_episode_rng.uniform(0.1, 0.15)
+                self.grasped_book_lengths = self._batched_episode_rng.uniform(self.grasped_book_config.length_randomization_bounds[0], self.grasped_book_config.length_randomization_bounds[1])
+            # else:
+            #     grasped_book_lengths = torch.ones((self.num_envs,)) * self.grasped_book_dict['length_randomization_bounds']
+
+            # if isinstance(self.grasped_book_dict['width_randomization_bounds'], list):
+            if self.grasped_book_config.randomize_width or self.grasped_book_widths is None:
+                # grasped_book_widths = self._batched_episode_rng.uniform(0.03, 0.065) # max gripper width is .08
+                self.grasped_book_widths = self._batched_episode_rng.uniform(self.grasped_book_config.width_randomization_bounds[0], self.grasped_book_config.width_randomization_bounds[1])
+            # else:
+            #     grasped_book_widths = torch.ones((self.num_envs,)) * self.grasped_book_dict['width_randomization_bounds']
+            
+            # if isinstance(self.grasped_book_dict['height_randomization_bounds'], list):
+            if self.grasped_book_config.randomize_height or self.grasped_book_heights is None:
+                # grasped_book_heights = self._batched_episode_rng.uniform(0.165, 0.25)
+                self.grasped_book_heights = self._batched_episode_rng.uniform(self.grasped_book_config.height_randomization_bounds[0], self.grasped_book_config.height_randomization_bounds[1])
+            # else:
+            #     grasped_book_heights = torch.ones((self.num_envs,)) * self.grasped_book_dict['height_randomization_bounds']
                 
-                # # save some useful values for use later
-                self.grasped_book_sizes = common.to_tensor(np.vstack([grasped_book_lengths, grasped_book_widths, grasped_book_heights])).T
+            # # save some useful values for use later
+            self.grasped_book_sizes = common.to_tensor(np.vstack([self.grasped_book_lengths, self.grasped_book_widths, self.grasped_book_heights])).T
+
+            # if isinstance(self.grasped_book_dict['randomize_density'], list):
+            if self.grasped_book_config.randomize_density or self.grasped_book_densities is None:
+                # self.grasped_book_densities = self._batched_episode_rng.uniform(650, 850)
+                self.grasped_book_densities = self._batched_episode_rng.uniform(self.grasped_book_config.density_randomization_bounds[0], self.grasped_book_config.density_randomization_bounds[1])
+            # else:
+            #     self.grasped_book_densities = torch.ones((self.num_envs,)) * self.grasped_book_dict['randomize_density']
                 
-                self.grasped_book_densities = self._batched_episode_rng.uniform(650, 850)
-                
+            if self.grasped_book_config.randomize_color or self.grasped_book_colors is None:
                 self.grasped_book_colors = np.ones((self.num_envs, 4))
                 self.grasped_book_colors[:,0] = self._batched_episode_rng.uniform(0.0, 1.0)
                 self.grasped_book_colors[:,1] = self._batched_episode_rng.uniform(0.0, 1.0)
@@ -412,33 +568,49 @@ class BookInsertionEnv(BaseEnv):
 
             self.new_grasped_book_is_spawned = True
 
-            if self.spawn_new_env_books or (not self.spawn_new_env_books and not self.new_env_books_are_spawned):
-                env_book_lengths = []
-                env_book_widths = []
+            # if self.spawn_new_env_books or (not self.spawn_new_env_books and not self.new_env_books_are_spawned):
+            if self.env_books_config.randomize_height or self.env_book_heights is None:
                 env_book_heights = []
-
-                env_book_colors = []
+            if self.env_books_config.randomize_width or self.env_book_widths is None:
+                env_book_widths = []
+            if self.env_books_config.randomize_length or self.env_book_lengths is None:
+                env_book_lengths = []
+            if self.env_books_config.randomize_density or self.env_book_densities is None:
                 env_book_densities = []
-                for i in range(self.num_env_books):
-                    env_book_lengths.append(self._batched_episode_rng.uniform(0.15, 0.2))
-                    env_book_widths.append(self._batched_episode_rng.uniform(0.015, 0.05))
-                    env_book_heights.append(self._batched_episode_rng.uniform(0.2475, 0.2525))
-                    env_book_densities.append(self._batched_episode_rng.uniform(655, 1015))
-
+            if self.env_books_config.randomize_color or self.env_book_colors is None:
+                env_book_colors = []
+            
+            for i in range(self.env_books_config.num_env_books):
+                if self.env_books_config.randomize_length or self.env_book_lengths is None:
+                    env_book_lengths.append(self._batched_episode_rng.uniform(self.env_books_config.length_randomization_bounds[0], self.env_books_config.length_randomization_bounds[1]))
+                if self.env_books_config.randomize_width or self.env_book_widths is None:
+                    env_book_widths.append(self._batched_episode_rng.uniform(self.env_books_config.width_randomization_bounds[0], self.env_books_config.width_randomization_bounds[1]))
+                if self.env_books_config.randomize_height or self.env_book_heights is None:
+                    env_book_heights.append(self._batched_episode_rng.uniform(self.env_books_config.height_randomization_bounds[0], self.env_books_config.height_randomization_bounds[1]))
+                if self.env_books_config.randomize_density or self.env_book_densities is None:
+                    env_book_densities.append(self._batched_episode_rng.uniform(self.env_books_config.density_randomization_bounds[0], self.env_books_config.density_randomization_bounds[1]))
+                if self.env_books_config.randomize_color or self.env_book_colors is None:
                     color = np.ones((self.num_envs, 4))
                     color[:,0] = self._batched_episode_rng.uniform(0.0, 1.0)
                     color[:,1] = self._batched_episode_rng.uniform(0.0, 1.0)
                     color[:,2] = self._batched_episode_rng.uniform(0.0, 1.0)
                     env_book_colors.append(color)
 
-                env_book_lengths = np.vstack(env_book_lengths).T # bxN
-                env_book_widths = np.vstack(env_book_widths).T # bxN
-                env_book_heights = np.vstack(env_book_heights).T # bxN
+            if self.env_books_config.randomize_height or self.env_book_heights is None:
+                self.env_book_heights = np.vstack(env_book_heights).T # bxN
+            if self.env_books_config.randomize_width or self.env_book_widths is None:
+                self.env_book_widths = np.vstack(env_book_widths).T # bxN
+            if self.env_books_config.randomize_length or self.env_book_lengths is None:
+                self.env_book_lengths = np.vstack(env_book_lengths).T # bxN
+            self.env_book_sizes = common.to_tensor(np.stack([self.env_book_lengths, self.env_book_widths, self.env_book_heights], axis=2))
+
+            if self.env_books_config.randomize_density or self.env_book_densities is None:
+                self.env_book_densities = np.vstack(env_book_densities).T
+            
+            if self.env_books_config.randomize_color or self.env_book_colors is None:
                 # construct bxNx3 tensor
-                self.env_book_sizes = common.to_tensor(np.stack([env_book_lengths, env_book_widths, env_book_heights], axis=2))
-                self.env_book_densities = common.to_tensor(np.stack(env_book_densities, axis=1)) # bxN
                 self.env_book_colors = np.stack(env_book_colors,axis=1) # bxNx4
-                assert self.env_book_colors.shape == (self.num_envs, self.num_env_books, 4), f"env_book_colors shape is incorrect, {env_book_colors.shape}"
+                assert self.env_book_colors.shape == (self.num_envs, self.env_books_config.num_env_books, 4), f"env_book_colors shape is incorrect, {self.env_book_colors.shape}"
 
                 # self.grasped_book.set_collision_group_bit(group=2, bit_idx=, bit=1)
                 # fingers is 00000008 (8)    00000000000000000000000000001000
@@ -455,28 +627,29 @@ class BookInsertionEnv(BaseEnv):
                 # self.grasped_book.set_collision_group(group=2, value=2147483647)
 
             # if self.spawn_new_env_books or (not self.spawn_new_env_books and not self.new_env_books_are_spawned) or (not self.spawn_new_env_books and self.shuffle_env_books):
-            if self.shuffle_env_books_mode != 'none':
+            # if self.shuffle_env_books_mode != 'none':
+            if self.env_books_config.shuffle_mode != 'none':
                 # apply the same shuffling to env_book_sizes, env_book_colors, and env_book_densities
-                indices = np.arange(self.num_env_books)
-                if self.shuffle_env_books_mode == 'all':
+                indices = np.arange(self.env_books_config.num_env_books)
+                if self.env_books_config.shuffle_mode == 'all':
                     self._batched_episode_rng.shuffle(indices)
-                elif self.shuffle_env_books_mode == 'left':
+                elif self.env_books_config.shuffle_mode == 'left':
                     # shuffle the first half of the env books
-                    left_indices = indices[:self.num_env_books//2]
+                    left_indices = indices[:self.env_books_config.num_env_books//2]
                     self._batched_episode_rng.shuffle(left_indices)
-                    indices[:self.num_env_books//2] = left_indices
-                elif self.shuffle_env_books_mode == 'right':
+                    indices[:self.env_books_config.num_env_books//2] = left_indices
+                elif self.env_books_config.shuffle_mode == 'right':
                     # shuffle the second half of the env books
-                    right_indices = indices[self.num_env_books//2:]
+                    right_indices = indices[self.env_books_config.num_env_books//2:]
                     self._batched_episode_rng.shuffle(right_indices)
-                    indices[self.num_env_books//2:] = right_indices
+                    indices[self.env_books_config.num_env_books//2:] = right_indices
 
                 self.env_book_sizes = self.env_book_sizes[:, indices, :]
                 self.env_book_colors = self.env_book_colors[:, indices, :]
                 self.env_book_densities = self.env_book_densities[:, indices]
 
             env_books_list = []
-            for j in range(self.num_env_books):
+            for j in range(self.env_books_config.num_env_books):
                 envs_per_env_book = []
                 for i in range(self.num_envs):
                     scene_idxs = [i]
@@ -499,7 +672,7 @@ class BookInsertionEnv(BaseEnv):
                 env_books_list.append(envs_per_env_book)
 
             # env_book_collision_indices = [0]
-            # for j in range(self.num_env_books-2):
+            # for j in range(self.env_books_config.num_env_books-2):
             #     env_book_collision_indices.append(env_book_collision_indices[j]+(j+2))
 
 
@@ -510,7 +683,7 @@ class BookInsertionEnv(BaseEnv):
             # want to make Nxb env books
             # create a copy of the env books list to keep track of the non-merged env books
             self.non_merged_env_books_list = []
-            for j in range(self.num_env_books):
+            for j in range(self.env_books_config.num_env_books):
                 envs_per_env_book = env_books_list[j]
                 self.non_merged_env_books_list.append(envs_per_env_book)
                 env_books_list[j] = Actor.merge(envs_per_env_book, f"book_{j}")
@@ -522,11 +695,10 @@ class BookInsertionEnv(BaseEnv):
 
             self.new_env_books_are_spawned = True
 
-
-            if self.book_ends_dict['mode'] != 'none':
+            if self.book_ends_config.mode != 'none':
                 left_book_ends = []
                 right_book_ends = []
-                self.book_end_sizes = [0.2, 0.3, self.book_ends_dict['height']]
+                self.book_end_sizes = [0.2, 0.3, self.book_ends_config.height]
                 for i in range(self.num_envs):
                     scene_idxs = [i]
                     left_book_end_builder = _build_book_end(
@@ -534,9 +706,9 @@ class BookInsertionEnv(BaseEnv):
                         length=self.book_end_sizes[0],
                         width=self.book_end_sizes[1],
                         height=self.book_end_sizes[2],
-                        color=self.book_ends_dict['color'],
-                        mass=self.book_ends_dict['mass'],
-                        friction=self.book_ends_dict['friction'],
+                        color=self.book_ends_config.color,
+                        mass=self.book_ends_config.mass,
+                        friction=self.book_ends_config.friction,
                     )
                     left_book_end_builder.set_initial_pose(sapien.Pose(p=[0, -1, 2]))
                     left_book_end_builder.set_scene_idxs(scene_idxs)
@@ -546,20 +718,20 @@ class BookInsertionEnv(BaseEnv):
                         length=self.book_end_sizes[0],
                         width=self.book_end_sizes[1],
                         height=self.book_end_sizes[2],
-                        color=self.book_ends_dict['color'],
-                        mass=self.book_ends_dict['mass'],
-                        friction=self.book_ends_dict['friction'],
+                        color=self.book_ends_config.color,
+                        mass=self.book_ends_config.mass,
+                        friction=self.book_ends_config.friction,
                     )
                     right_book_end_builder.set_initial_pose(sapien.Pose(p=[0, -1, 3]))
                     right_book_end_builder.set_scene_idxs(scene_idxs)
-                    if self.book_ends_dict['mode'] == 'static':
+                    if self.book_ends_config.mode == 'static':
                         left_book_end = left_book_end_builder.build_static(f"left_book_end_{i}")
                         right_book_end = right_book_end_builder.build_static(f"right_book_end_{i}")
-                    elif self.book_ends_dict['mode'] == 'dynamic':
+                    elif self.book_ends_config.mode == 'dynamic':
                         left_book_end = left_book_end_builder.build_dynamic(f"left_book_end_{i}")
                         right_book_end = right_book_end_builder.build_dynamic(f"right_book_end_{i}")
                     else:
-                        raise ValueError(f"Invalid book ends mode {self.book_ends_dict['mode']}")
+                        raise ValueError(f"Invalid book ends mode {self.book_ends_config.mode}")
                     self.remove_from_state_dict_registry(left_book_end)
                     self.remove_from_state_dict_registry(right_book_end)
                     left_book_ends.append(left_book_end)
@@ -584,21 +756,13 @@ class BookInsertionEnv(BaseEnv):
 
             # Initialize the robot
             qpos = torch.tensor(
-                [
-                    0.022516679397616424, 
-                    0.11646689505116431, 
-                    -0.3625673227601117, 
-                    -1.37265637618617, 
-                    0.033468631741809286, 
-                    1.4658307538809252, 
-                    0.46052758571920294,
-                    .04,
-                    .04,
-                ]
+                self.robot_config.init_qpos
             )
             qpos = qpos.repeat(b, 1)
             qpos[:, -2:] = (self.grasped_book_sizes[:, 1])/2 + .001
             self.agent.robot.set_qpos(qpos)
+            
+            # This is for the root pose
             # self.agent.robot.set_pose(sapien.Pose([-0.615, 0, 0]))
             self.agent.robot.set_pose(sapien.Pose([0., 0, 0]))
 
@@ -609,6 +773,12 @@ class BookInsertionEnv(BaseEnv):
                 self.scene._gpu_fetch_all()
 
             end_effector_pose = self.agent.tcp.pose.raw_pose
+            # if isinstance(self.robot_config.additive_y_randomization_bounds, list):
+            #     new_end_effector_pose = end_effector_pose.clone()
+            #     new_end_effector_pose[:, 1] += self._batched_episode_rng.uniform(self.robot_config.additive_y_randomization_bounds[0], self.robot_config.additive_y_randomization_bounds[1], size=(b,))
+                # use inverse kinematics to get the new qpos
+
+                # qpos = self.agent.robot.inverse_kinematics(new_end_effector_pose, max_iter=1000)
             
             # .038 from tcp to flat surface of gripper
             pos = torch.zeros((b, 3))
@@ -621,10 +791,13 @@ class BookInsertionEnv(BaseEnv):
             self.grasped_book.set_pose(Pose.create_from_pq(pos, quat))
 
             self.xy_slot_location = torch.zeros((b, 2))
+            if isinstance(self.slot_config.y_randomization_bounds, list):
+                self.xy_slot_location[:, 1] = common.to_tensor(self._batched_episode_rng.uniform(self.slot_config.y_randomization_bounds[0], self.slot_config.y_randomization_bounds[1], size=(b,)))
+            else:
+                self.xy_slot_location[:, 1] = self.slot_config.y_randomization_bounds
             self.xy_slot_location[:, 0] = end_effector_pose[:, 0]
-            self.xy_slot_location[:, 1] = 0
 
-            slot_width = self.grasped_book_sizes[:, 1] - .0035
+            slot_width = self.grasped_book_sizes[:, 1] - self.slot_config.negative_tolerance
 
             quat = torch.tensor([0., 0, 0, 1]).repeat(b, 1)
             # compute the env book poses
@@ -632,16 +805,16 @@ class BookInsertionEnv(BaseEnv):
                 pos = torch.zeros((b, 3))
                 pos[:, 0] = self.xy_slot_location[:, 0] - self.env_book_sizes[:, j, 0]/2 + .15/2
                 pos[:, 2] = self.env_book_sizes[:, j, 2]/2 + .001
-                if j < self.slot_left_of_book_index:
-                    pos[:, 1] = self.xy_slot_location[:, 1] - ((slot_width/2) + self.env_book_sizes[:, j+1:self.slot_left_of_book_index, 1].sum(dim=1))
+                if j < self.slot_config.left_of_book_index:
+                    pos[:, 1] = self.xy_slot_location[:, 1] - ((slot_width/2) + self.env_book_sizes[:, j+1:self.slot_config.left_of_book_index, 1].sum(dim=1))
                     pos[:, 1] += -self.env_book_sizes[:, j, 1]/2
                 else:
-                    pos[:, 1] = self.xy_slot_location[:, 1] + ((slot_width/2) + self.env_book_sizes[:, self.slot_left_of_book_index:j, 1].sum(dim=1))
+                    pos[:, 1] = self.xy_slot_location[:, 1] + ((slot_width/2) + self.env_book_sizes[:, self.slot_config.left_of_book_index:j, 1].sum(dim=1))
                     pos[:, 1] += self.env_book_sizes[:, j, 1]/2
 
                 self.env_books_list[j].set_pose(Pose.create_from_pq(pos, quat))
             
-            if self.book_ends_dict['mode'] != 'none':
+            if self.book_ends_config.mode != 'none':
                 identity_quat = torch.tensor([0., 0, 0, 1]).repeat(b, 1)
                 
                 left_book_end_pos = torch.zeros((b, 3))
@@ -876,8 +1049,8 @@ class BookInsertionEnv(BaseEnv):
             # use the midpoint of the two books as the y position
             pos[:, 1] = (self.bottom_inner_corner_of_book_left_of_slot_pose.p[:, 1] + self.bottom_inner_corner_of_book_right_of_slot_pose.p[:, 1])/2
             
-            height_of_left_book = self.env_book_sizes[:, self.slot_left_of_book_index-1, 2]
-            height_of_right_book = self.env_book_sizes[:, self.slot_left_of_book_index, 2]
+            height_of_left_book = self.env_book_sizes[:, self.slot_config.left_of_book_index-1, 2]
+            height_of_right_book = self.env_book_sizes[:, self.slot_config.left_of_book_index, 2]
             pos[:, 2] = torch.maximum(height_of_left_book, height_of_right_book)
             
             # set orientation to be identity (to world frame)
@@ -887,34 +1060,34 @@ class BookInsertionEnv(BaseEnv):
     @property
     def bottom_inner_corner_of_book_right_of_slot_pose(self):
         with torch.device(self.device):
-            bottom_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, -self.env_book_sizes[:, self.slot_left_of_book_index, 1]/2, -self.env_book_sizes[:, self.slot_left_of_book_index, 2]/2]))
+            bottom_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, -self.env_book_sizes[:, self.slot_config.left_of_book_index, 1]/2, -self.env_book_sizes[:, self.slot_config.left_of_book_index, 2]/2]))
             # then also apply 180 intrinsic rotation around z-axis to get x to point in same direction as world
             quat_to_correct_orientation = axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])).repeat(self.num_envs, 1)
-        return self.env_books_list[self.slot_left_of_book_index].pose * bottom_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
+        return self.env_books_list[self.slot_config.left_of_book_index].pose * bottom_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
     
     @property
     def top_inner_corner_of_book_right_of_slot_pose(self):
         with torch.device(self.device):
-            top_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, -self.env_book_sizes[:, self.slot_left_of_book_index, 1]/2, self.env_book_sizes[:, self.slot_left_of_book_index, 2]/2]))
+            top_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, -self.env_book_sizes[:, self.slot_config.left_of_book_index, 1]/2, self.env_book_sizes[:, self.slot_config.left_of_book_index, 2]/2]))
             # then also apply 180 intrinsic rotation around z-axis to get x to point in same direction as world
             quat_to_correct_orientation = axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])).repeat(self.num_envs, 1)
-        return self.env_books_list[self.slot_left_of_book_index].pose * top_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
+        return self.env_books_list[self.slot_config.left_of_book_index].pose * top_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
 
     @property
     def bottom_inner_corner_of_book_left_of_slot_pose(self):
         with torch.device(self.device):
-            bottom_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, self.env_book_sizes[:, self.slot_left_of_book_index-1, 1]/2, -self.env_book_sizes[:, self.slot_left_of_book_index-1, 2]/2]))
+            bottom_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, self.env_book_sizes[:, self.slot_config.left_of_book_index-1, 1]/2, -self.env_book_sizes[:, self.slot_config.left_of_book_index-1, 2]/2]))
             # then also apply 180 intrinsic rotation around z-axis to get x to point in same direction as world
             quat_to_correct_orientation = axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])).repeat(self.num_envs, 1)
-        return self.env_books_list[self.slot_left_of_book_index-1].pose * bottom_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
+        return self.env_books_list[self.slot_config.left_of_book_index-1].pose * bottom_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
     
     @property
     def top_inner_corner_of_book_left_of_slot_pose(self):
         with torch.device(self.device):
-            top_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, self.env_book_sizes[:, self.slot_left_of_book_index-1, 1]/2, self.env_book_sizes[:, self.slot_left_of_book_index-1, 2]/2]))
+            top_inner_corner_in_book_frame = Pose.create_from_pq(p=torch.tensor([0, self.env_book_sizes[:, self.slot_config.left_of_book_index-1, 1]/2, self.env_book_sizes[:, self.slot_config.left_of_book_index-1, 2]/2]))
             # then also apply 180 intrinsic rotation around z-axis to get x to point in same direction as world
             quat_to_correct_orientation = axis_angle_to_quaternion(torch.tensor([0, 0, np.pi])).repeat(self.num_envs, 1)
-        return self.env_books_list[self.slot_left_of_book_index-1].pose * top_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
+        return self.env_books_list[self.slot_config.left_of_book_index-1].pose * top_inner_corner_in_book_frame * Pose.create_from_pq(q=quat_to_correct_orientation)
     
     @property
     def bottom_of_grasped_book_pose(self):
@@ -969,7 +1142,7 @@ class BookInsertionEnv(BaseEnv):
         with torch.device(self.device):
             assert self.num_envs == 1, "Only supports single envs for now"
             contact_forces = self.scene.get_pairwise_contact_forces(
-                self.grasped_book, self.env_books_list[self.slot_left_of_book_index]
+                self.grasped_book, self.env_books_list[self.slot_config.left_of_book_index]
             )        
             force = torch.linalg.norm(contact_forces, axis=1)
             # make sure force is pointing rightward (pushing in positive y direction)
@@ -984,7 +1157,7 @@ class BookInsertionEnv(BaseEnv):
         with torch.device(self.device):
             assert self.num_envs == 1, "Only supports single envs for now"
             contact_forces = self.scene.get_pairwise_contact_forces(
-                self.grasped_book, self.env_books_list[self.slot_left_of_book_index-1]
+                self.grasped_book, self.env_books_list[self.slot_config.left_of_book_index-1]
             )        
             force = torch.linalg.norm(contact_forces, axis=1)
             # make sure force is pointing leftward (pushing in negative y direction)
@@ -1009,8 +1182,8 @@ class BookInsertionEnv(BaseEnv):
             # check if any env books have toppled
             # check if the angle of the books with the vertical is greater than 45 degrees
             # create a bxN tensor of angles
-            angles = torch.zeros((self.num_envs, self.num_env_books))
-            for j in range(self.num_env_books):
+            angles = torch.zeros((self.num_envs, self.env_books_config.num_env_books))
+            for j in range(self.env_books_config.num_env_books):
                 angles[:, j] = self.angle_of_pose_with_vertical(self.env_books_list[j].pose)
             # check if any of the angles are greater than 45 degrees
             toppled = torch.any(angles > self.success_criteria_params['book_toppled_angle_with_vertical_threshold'], dim=1)
