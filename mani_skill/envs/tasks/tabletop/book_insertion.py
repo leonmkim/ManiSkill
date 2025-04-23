@@ -791,7 +791,7 @@ class BookInsertionEnv(BaseEnv):
             self.grasped_book.set_pose(Pose.create_from_pq(pos, quat))
 
             self.xy_slot_location = torch.zeros((b, 2))
-            if isinstance(self.slot_config.y_randomization_bounds, list):
+            if not (isinstance(self.slot_config.y_randomization_bounds, float) or isinstance(self.slot_config.y_randomization_bounds, int)):
                 self.xy_slot_location[:, 1] = common.to_tensor(self._batched_episode_rng.uniform(self.slot_config.y_randomization_bounds[0], self.slot_config.y_randomization_bounds[1], size=(b,)))
             else:
                 self.xy_slot_location[:, 1] = self.slot_config.y_randomization_bounds
