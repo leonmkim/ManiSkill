@@ -220,7 +220,9 @@ class SlotConfig:
     """
     negative_tolerance: float = 0.0035
     left_of_book_index: int = 4
-    y_randomization_bounds: Union[float, list] = 0.0
+    # y_randomization_bounds: Union[float, list] = 0.0
+    # change type to any to make omegaconf accept it: https://github.com/omry/omegaconf/issues/144
+    y_randomization_bounds: Any = 0.0
 
 @dataclass
 class GraspedBookConfig:
