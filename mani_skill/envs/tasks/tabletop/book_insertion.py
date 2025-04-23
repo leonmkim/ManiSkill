@@ -251,9 +251,9 @@ class BookEndsConfig:
     mode: str = 'none'
     height: float = 0.25
     mass: float = 0.5
-    color: str = "#FFD289" # default color
+    color: str = "#808080" # default color
     friction: float = 0.3 # default friction for sapien objects is 0.3
-    
+
     def __post_init__(self):
         assert self.mode in ['none', 'static', 'dynamic'], f"book_ends_mode must be one of ['none', 'static', 'dynamic'], but got {self.mode}"
 
