@@ -8,6 +8,7 @@ class SpacemouseInput:
             self,
             mode:str='delta_pose',
             start_gripper_closed=True,
+            sixd_mask=[1,1,1,1,1,1], # for x, y, z, roll, pitch, yaw
     ):
         success = pyspacemouse.open()
         if not success:
@@ -17,7 +18,7 @@ class SpacemouseInput:
         supported_modes = ['delta_pose', 'target_pose']
         assert mode in ['delta_pose', 'target_pose'], f"mode should be in {supported_modes}, got {mode}"
         self.spacemouse_input_function = self.spacemouse_input_to_delta_pose if mode == 'delta_pose' else self.apply_spacemouse_input_to_target_pose
-
+        self.sixd_mask = sixd_mask
         self.mode = mode
         self.start_gripper_closed = start_gripper_closed
         self.gripper_action = -1 if start_gripper_closed else 1
@@ -25,7 +26,7 @@ class SpacemouseInput:
         # self.rotation_factor = 0.02
 
         self.translation_factor = 0.1
-        self.rotation_factor = 0.15
+        self.rotation_factor = 0.25
 
         self.button_timeout = 0.4
         self.last_right_button_press_time = time.perf_counter()
@@ -70,12 +71,12 @@ class SpacemouseInput:
     
     def spacemouse_input_to_delta_pose(self, spacemouse_event):
         delta_pose = np.zeros(7)
-        # delta_pose[0] = -spacemouse_event.y * self.translation_factor
-        delta_pose[1] = spacemouse_event['x'] * self.translation_factor
-        delta_pose[2] = spacemouse_event['z'] * self.translation_factor
-        delta_pose[3] = spacemouse_event['roll'] * self.rotation_factor
-        # delta_pose[4] = spacemouse_event.pitch * self.rotation_factor
-        # delta_pose[5] = spacemouse_event.yaw * self.rotation_factor
+        delta_pose[0] = -spacemouse_event['y'] * self.translation_factor * self.sixd_mask[0]
+        delta_pose[1] = spacemouse_event['x'] * self.translation_factor * self.sixd_mask[1]
+        delta_pose[2] = spacemouse_event['z'] * self.translation_factor * self.sixd_mask[2]
+        delta_pose[3] = spacemouse_event['roll'] * self.rotation_factor * self.sixd_mask[3]
+        delta_pose[4] = spacemouse_event['pitch'] * self.rotation_factor * self.sixd_mask[4]
+        delta_pose[5] = spacemouse_event['yaw'] * self.rotation_factor * self.sixd_mask[5]
         if spacemouse_event['buttons'][1] and time.perf_counter() - self.last_right_button_press_time > self.button_timeout:
             self.gripper_action = -self.gripper_action
             self.last_right_button_press_time = time.perf_counter()

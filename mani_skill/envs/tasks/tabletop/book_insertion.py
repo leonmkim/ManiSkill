@@ -13,7 +13,7 @@ from mani_skill.utils import common, sapien_utils
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder, SimpleTableSceneBuilder
 from mani_skill.utils.building.actors.common import build_coordinate_frame
-from mani_skill.utils.structs import Actor, Pose
+from mani_skill.utils.structs import Actor, Pose, Articulation
 from mani_skill.utils.structs.types import SimConfig
 from mani_skill.utils.geometry.rotation_conversions import matrix_to_quaternion
 
@@ -146,30 +146,96 @@ def _build_book(
 def _build_book_end(
     scene: ManiSkillScene, 
     length, width, height,
+    mode='static',
     color="#FFD289", 
     mass=0.5,
     friction=0.3, # default for both static and dynamic is 0.3
+    wall_length=None, wall_width=None, wall_height=None,
+    travel_limit=None,
+    book_end_wrt_wall=None, # +y or -y
 ):
     # book end is just a box
     if isinstance(color, str):
         color = sapien_utils.hex2rgba(color)
-    builder = scene.create_actor_builder()
-    half_size = [length/2, width/2, height/2]
-    pose = sapien.Pose([0, 0, 0])
+    if mode in ['static', 'dynamic']:
+        builder = scene.create_actor_builder()
+        half_size = [length/2, width/2, height/2]
+        pose = sapien.Pose([0, 0, 0])
 
-    # compute the density from the mass and volume
-    density = mass / (length * width * height)
-    phys_mat = sapien.physx.get_default_material()
-    phys_mat.set_static_friction(friction) # default for both static and dynamic is 0.3
-    phys_mat.set_dynamic_friction(friction)
-    builder.add_box_collision(pose, half_size, density=density, material=phys_mat)
+        # compute the density from the mass and volume
+        density = mass / (length * width * height)
+        phys_mat = sapien.physx.PhysxMaterial(
+            static_friction=friction, dynamic_friction=friction, restitution=0.0
+        )
+        builder.add_box_collision(pose, half_size, density=density, material=phys_mat)
 
-    viz_mat = sapien.render.RenderMaterial(
-        base_color=color, roughness=0.5, specular=0.5
-    )
-    builder.add_box_visual(pose, half_size, material=viz_mat)
+        viz_mat = sapien.render.RenderMaterial(
+            base_color=color, roughness=0.5, specular=0.5
+        )
+        builder.add_box_visual(pose, half_size, material=viz_mat)
+    elif mode == 'spring':
+        assert wall_length is not None, "wall_length must be specified for spring book end"
+        assert wall_width is not None, "wall_width must be specified for spring book end"
+        assert wall_height is not None, "wall_height must be specified for spring book end"
+        assert travel_limit is not None, "travel_limit must be specified for spring book end"
+        assert book_end_wrt_wall in ['+y', '-y'], "book_end_wrt_wall must be either '+y' or '-y'"
+
+        builder = scene.create_articulation_builder()
+        wall = builder.create_link_builder()
+        wall.set_name("wall")
+
+        wall_origin_pose = sapien.Pose([0, 0, +wall_height/2 - height/2])# center height to the book_end origin
+        wall.add_box_collision(
+            pose=wall_origin_pose, 
+            half_size=[wall_length/2, wall_width/2, wall_height/2],
+            density=mass/(wall_length*wall_width*wall_height),
+        )
+        wall.add_box_visual(
+            pose=wall_origin_pose,
+            half_size=[wall_length/2, wall_width/2, wall_height/2],
+            material=sapien.render.RenderMaterial(
+                base_color=color, roughness=0.5, specular=0.5
+            ),
+        )
+
+        book_end = builder.create_link_builder(wall)
+        book_end.set_name("book_end")
+        book_end_phys_material = sapien.physx.PhysxMaterial(
+            static_friction=friction, dynamic_friction=friction, restitution=0.0
+        )
+        book_end.add_box_collision(
+            half_size=[length/2, width/2, height/2],
+            density=mass/(length*width*height),
+            material=book_end_phys_material,
+        )
+        book_end.add_box_visual(
+            half_size=[length/2, width/2, height/2],
+            material=sapien.render.RenderMaterial(
+                base_color=color, roughness=0.5, specular=0.5
+            ),
+        )
+
+        book_end.set_joint_name("book_end_joint")
+        if book_end_wrt_wall == '+y':
+            pose_in_parent = sapien.Pose(p=[0, wall_width/2, 0], q=axis_angle_to_quaternion(torch.tensor([0, 0, np.pi/2.]))) # Parent_T_Joint
+            pose_in_child = sapien.Pose(p=[0, -(width/2), 0], q=axis_angle_to_quaternion(torch.tensor([0, 0, np.pi/2.]))) # Child_T_Joint
+        elif book_end_wrt_wall == '-y':
+            pose_in_parent = sapien.Pose(p=[0, -wall_width/2, 0], q=axis_angle_to_quaternion(torch.tensor([0, 0, -np.pi/2.])))
+            pose_in_child = sapien.Pose(p=[0, (width/2), 0], q=axis_angle_to_quaternion(torch.tensor([0, 0, -np.pi/2.]))) # Child_T_Joint
+        else:
+            raise ValueError("book_end_wrt_wall must be either '+y' or '-y'")
+        
+        book_end.set_joint_properties(
+            type='prismatic',
+            limits=[[0, travel_limit]],
+            pose_in_parent=pose_in_parent, # Parent_T_Joint
+            pose_in_child=pose_in_child, # Child_T_Joint
+            friction=0.0,
+            damping=0.0,
+        )
+
     return builder
-
+    
 from dataclasses import dataclass, field
 
 @dataclass
@@ -245,19 +311,30 @@ class GraspedBookConfig:
         assert self.width_randomization_bounds[1] > self.width_randomization_bounds[0], f"width_randomization_bounds must be in the form [min, max], but got {self.width_randomization_bounds}"
         assert self.length_randomization_bounds[1] > self.length_randomization_bounds[0], f"length_randomization_bounds must be in the form [min, max], but got {self.length_randomization_bounds}"
 
+from typing import Optional
 @dataclass
 class BookEndsConfig:
     """
     Configuration for the book ends in the BookInsertionEnv.
     """
     mode: str = 'none'
-    height: float = 0.25
+    length: float = 0.2
+    width: float = 0.3
+    height: float = 0.3
     mass: float = 0.5
     color: str = "#808080" # default color
     friction: float = 0.3 # default friction for sapien objects is 0.3
 
+    wall_height: float = 0.3
+    wall_length: float = 0.2
+    wall_width: float = 0.05
+    travel_limit: float = 0.05
+    joint_stiffness: float = 100
+    joint_damping: float = 20
+
     def __post_init__(self):
-        assert self.mode in ['none', 'static', 'dynamic'], f"book_ends_mode must be one of ['none', 'static', 'dynamic'], but got {self.mode}"
+        assert self.mode in ['none', 'static', 'dynamic', 'spring'], f"book_ends_mode must be one of ['none', 'static', 'dynamic', 'spring'], but got {self.mode}"
+
 
 @register_env("BookInsertion-v0", max_episode_steps=100)
 class BookInsertionEnv(BaseEnv):
@@ -700,29 +777,41 @@ class BookInsertionEnv(BaseEnv):
             if self.book_ends_config.mode != 'none':
                 left_book_ends = []
                 right_book_ends = []
-                self.book_end_sizes = [0.2, 0.3, self.book_ends_config.height]
+                self.book_end_sizes = [self.book_ends_config.length, self.book_ends_config.width, self.book_ends_config.height]
                 for i in range(self.num_envs):
                     scene_idxs = [i]
                     left_book_end_builder = _build_book_end(
                         self.scene,
+                        mode=self.book_ends_config.mode,
                         length=self.book_end_sizes[0],
                         width=self.book_end_sizes[1],
                         height=self.book_end_sizes[2],
                         color=self.book_ends_config.color,
                         mass=self.book_ends_config.mass,
                         friction=self.book_ends_config.friction,
+                        wall_height=self.book_ends_config.wall_height,
+                        wall_length=self.book_ends_config.wall_length,
+                        wall_width=self.book_ends_config.wall_width,
+                        travel_limit=self.book_ends_config.travel_limit,
+                        book_end_wrt_wall='-y',
                     )
                     left_book_end_builder.set_initial_pose(sapien.Pose(p=[0, -1, 2]))
                     left_book_end_builder.set_scene_idxs(scene_idxs)
 
                     right_book_end_builder = _build_book_end(
                         self.scene,
+                        mode=self.book_ends_config.mode,
                         length=self.book_end_sizes[0],
                         width=self.book_end_sizes[1],
                         height=self.book_end_sizes[2],
                         color=self.book_ends_config.color,
                         mass=self.book_ends_config.mass,
                         friction=self.book_ends_config.friction,
+                        wall_height=self.book_ends_config.wall_height,
+                        wall_length=self.book_ends_config.wall_length,
+                        wall_width=self.book_ends_config.wall_width,
+                        travel_limit=self.book_ends_config.travel_limit,
+                        book_end_wrt_wall='+y',
                     )
                     right_book_end_builder.set_initial_pose(sapien.Pose(p=[0, -1, 3]))
                     right_book_end_builder.set_scene_idxs(scene_idxs)
@@ -732,6 +821,21 @@ class BookInsertionEnv(BaseEnv):
                     elif self.book_ends_config.mode == 'dynamic':
                         left_book_end = left_book_end_builder.build_dynamic(f"left_book_end_{i}")
                         right_book_end = right_book_end_builder.build_dynamic(f"right_book_end_{i}")
+                    elif self.book_ends_config.mode == 'spring':
+                        left_book_end = left_book_end_builder.build(f"left_book_end_{i}", fix_root_link=True)
+                        left_book_end.find_joint_by_name("book_end_joint").set_drive_properties(
+                            stiffness=self.book_ends_config.joint_stiffness,
+                            damping=self.book_ends_config.joint_damping,
+                        )
+                        left_book_end.find_joint_by_name("book_end_joint").set_drive_target(self.book_ends_config.travel_limit)
+                        
+                        right_book_end = right_book_end_builder.build(f"right_book_end_{i}", fix_root_link=True)
+                        right_book_end.find_joint_by_name("book_end_joint").set_drive_properties(
+                            stiffness=self.book_ends_config.joint_stiffness,
+                            damping=self.book_ends_config.joint_damping,
+                        )
+                        right_book_end.find_joint_by_name("book_end_joint").set_drive_target(self.book_ends_config.travel_limit)
+
                     else:
                         raise ValueError(f"Invalid book ends mode {self.book_ends_config.mode}")
                     self.remove_from_state_dict_registry(left_book_end)
@@ -739,8 +843,12 @@ class BookInsertionEnv(BaseEnv):
                     left_book_ends.append(left_book_end)
                     right_book_ends.append(right_book_end)
                 # merge the book ends
-                self.left_book_end = Actor.merge(left_book_ends, "left_book_end")
-                self.right_book_end = Actor.merge(right_book_ends, "right_book_end")
+                if self.book_ends_config.mode == 'spring':
+                    self.left_book_end = Articulation.merge(left_book_ends, "left_book_end")
+                    self.right_book_end = Articulation.merge(right_book_ends, "right_book_end")
+                else:
+                    self.left_book_end = Actor.merge(left_book_ends, "left_book_end")
+                    self.right_book_end = Actor.merge(right_book_ends, "right_book_end")
                 self.add_to_state_dict_registry(self.left_book_end)
                 self.add_to_state_dict_registry(self.right_book_end)
                     
@@ -825,6 +933,8 @@ class BookInsertionEnv(BaseEnv):
                 # place the left book end to the left of the left-most env book
                 leftmost_env_book_pos = self.env_books_list[0].pose.raw_pose[:, :3]
                 left_book_end_pos[:, 1] = leftmost_env_book_pos[:, 1] - (self.env_book_sizes[:, 0, 1]/2) - (self.book_end_sizes[1]/2)
+                if self.book_ends_config.mode == 'spring':
+                    left_book_end_pos[:, 1] += - (self.book_end_sizes[1]/2 + self.book_ends_config.travel_limit + self.book_ends_config.wall_width/2)
                 self.left_book_end.set_pose(Pose.create_from_pq(left_book_end_pos, identity_quat))
 
                 right_book_end_pos = torch.zeros((b, 3))
@@ -833,6 +943,8 @@ class BookInsertionEnv(BaseEnv):
                 # place the right book end to the right of the right-most env book
                 rightmost_env_book_pos = self.env_books_list[-1].pose.raw_pose[:, :3]
                 right_book_end_pos[:, 1] = rightmost_env_book_pos[:, 1] + (self.env_book_sizes[:, -1, 1]/2) + (self.book_end_sizes[1]/2)
+                if self.book_ends_config.mode == 'spring':
+                    right_book_end_pos[:, 1] += (self.book_end_sizes[1]/2 + self.book_ends_config.travel_limit + self.book_ends_config.wall_width/2)
                 self.right_book_end.set_pose(Pose.create_from_pq(right_book_end_pos, identity_quat))
 
             # target_EE_pose = self.agent.controller.get_state()['arm']['target_pose']

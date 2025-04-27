@@ -28,11 +28,13 @@ import time
 
 from mani_skill.utils.teleoperation import SpacemouseInput
 #%%
-spacemouse_input = SpacemouseInput()
+spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
 desired_viewing_size = (256, 256)
 
 #%%
 ## testing book insertion task
+joint_stiffness = 100.0
+joint_damping = 2*np.sqrt(joint_stiffness)
 env = gym.make(
     # "LiftPegUpright-v1", 
     "BookInsertion-v0", 
@@ -47,11 +49,15 @@ env = gym.make(
     render_dtc_maps=False,
     render_normals_maps=False,
     book_ends_config=BookEndsConfig(
-        mode='dynamic',
-        height=0.1,
-        mass=3.5,
-        friction=0.15,
+        mode='spring',
+        height=0.25,
+        wall_height=0.25,
+        mass=1.0,
+        friction=0.0,
         color="#808080", # default color
+        joint_stiffness=joint_stiffness, 
+        joint_damping=joint_damping,
+        travel_limit=0.1,
     ),
     grasped_book_config=GraspedBookConfig(
         randomize_color=False,
@@ -90,6 +96,34 @@ env = gym.make(
         shader_pack="minimal"
     )
 )
+# env = gym.make(
+#     # "LiftPegUpright-v1", 
+#     "SpringArticulationEnv-v0", 
+#     reward_mode="none", 
+#     sim_backend='physx_cpu', 
+#     render_mode="rgb_array", 
+#     # render_mode="sensors", 
+#     render_backend="gpu",
+#     obs_mode="rgb",
+#     control_mode="pd_ee_target_delta_pose",
+#     # control_mode="pd_ee_delta_pose",
+#     sim_config=dict(
+#         sim_freq=100, # default 100
+#         control_freq=20, # default 20
+#         scene_config=dict(
+#             solver_position_iterations=15, # 15 is the default
+#             contact_offset=0.02, # 0.02 is the default
+#             # contact_offset=0.02, # 0.02 is the default
+#             cpu_workers=0, # 0 is the default
+#         )
+#     ),
+#     viewer_camera_configs=dict(
+#         shader_pack="minimal"
+#     ),
+#     human_render_camera_configs=dict(
+#         shader_pack="minimal"
+#     )
+# )
 # seed = 0
 seed = 1_000_000
 num_trajs = 0
@@ -172,7 +206,7 @@ while True:
             time.sleep(time_to_sleep)
         if elapsed_timesteps % 50 == 0:
             print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
-            print(f"success: {info['success']} | success duration: {info['elapsed_success_duration']} | t. success: {info['transient_success']} | z_distance: {info['z_distance_bw_top_of_grasped_book_and_top_of_slot']}")
+            # print(f"success: {info['success']} | success duration: {info['elapsed_success_duration']} | t. success: {info['transient_success']} | z_distance: {info['z_distance_bw_top_of_grasped_book_and_top_of_slot']}")
     
     if key == ord('q'):
         num_trajs += 1
