@@ -29,7 +29,7 @@ import logging
 record_logger = logging.getLogger("record_logger")
 
 #%%
-spacemouse_input = SpacemouseInput()
+spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
 desired_viewing_size = (256, 256)
 output_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop")
 record_demonstrations = True
@@ -37,6 +37,8 @@ record_video = False
 
 #%%
 ## testing book insertion task
+joint_stiffness = 100.0
+joint_damping = 2*np.sqrt(joint_stiffness)
 env = gym.make(
     # "LiftPegUpright-v1", 
     "BookInsertion-v0", 
@@ -52,11 +54,15 @@ env = gym.make(
     render_normals_maps=False,
     suppress_evaluation=True,
     book_ends_config=BookEndsConfig(
-        mode='dynamic',
-        height=0.1,
-        mass=3.5,
-        friction=0.15,
+        mode='spring',
+        height=0.25,
+        wall_height=0.25,
+        mass=1.0,
+        friction=0.0,
         color="#808080", # default color
+        joint_stiffness=joint_stiffness, 
+        joint_damping=joint_damping,
+        travel_limit=0.125,
     ),
     grasped_book_config=GraspedBookConfig(
         randomize_color=False,

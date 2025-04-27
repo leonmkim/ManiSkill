@@ -57,7 +57,7 @@ env = gym.make(
         color="#808080", # default color
         joint_stiffness=joint_stiffness, 
         joint_damping=joint_damping,
-        travel_limit=0.1,
+        travel_limit=0.125,
     ),
     grasped_book_config=GraspedBookConfig(
         randomize_color=False,

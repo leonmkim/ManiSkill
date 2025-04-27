@@ -217,17 +217,18 @@ def _build_book_end(
 
         book_end.set_joint_name("book_end_joint")
         if book_end_wrt_wall == '+y':
-            pose_in_parent = sapien.Pose(p=[0, wall_width/2, 0], q=axis_angle_to_quaternion(torch.tensor([0, 0, np.pi/2.]))) # Parent_T_Joint
+            pose_in_parent = sapien.Pose(p=[0, wall_width/2 + travel_limit, 0], q=axis_angle_to_quaternion(torch.tensor([0, 0, np.pi/2.]))) # Parent_T_Joint
             pose_in_child = sapien.Pose(p=[0, -(width/2), 0], q=axis_angle_to_quaternion(torch.tensor([0, 0, np.pi/2.]))) # Child_T_Joint
         elif book_end_wrt_wall == '-y':
-            pose_in_parent = sapien.Pose(p=[0, -wall_width/2, 0], q=axis_angle_to_quaternion(torch.tensor([0, 0, -np.pi/2.])))
+            pose_in_parent = sapien.Pose(p=[0, -(wall_width/2+ travel_limit), 0], q=axis_angle_to_quaternion(torch.tensor([0, 0, -np.pi/2.])))
             pose_in_child = sapien.Pose(p=[0, (width/2), 0], q=axis_angle_to_quaternion(torch.tensor([0, 0, -np.pi/2.]))) # Child_T_Joint
         else:
             raise ValueError("book_end_wrt_wall must be either '+y' or '-y'")
         
         book_end.set_joint_properties(
             type='prismatic',
-            limits=[[0, travel_limit]],
+            # limits=[[0, travel_limit]],
+            limits=[[-travel_limit, 0]],
             pose_in_parent=pose_in_parent, # Parent_T_Joint
             pose_in_child=pose_in_child, # Child_T_Joint
             friction=0.0,
@@ -319,7 +320,7 @@ class BookEndsConfig:
     """
     mode: str = 'none'
     length: float = 0.2
-    width: float = 0.3
+    width: float = 0.025
     height: float = 0.3
     mass: float = 0.5
     color: str = "#808080" # default color
@@ -327,7 +328,7 @@ class BookEndsConfig:
 
     wall_height: float = 0.3
     wall_length: float = 0.2
-    wall_width: float = 0.05
+    wall_width: float = 0.025
     travel_limit: float = 0.05
     joint_stiffness: float = 100
     joint_damping: float = 20
@@ -827,14 +828,16 @@ class BookInsertionEnv(BaseEnv):
                             stiffness=self.book_ends_config.joint_stiffness,
                             damping=self.book_ends_config.joint_damping,
                         )
-                        left_book_end.find_joint_by_name("book_end_joint").set_drive_target(self.book_ends_config.travel_limit)
+                        # left_book_end.find_joint_by_name("book_end_joint").set_drive_target(self.book_ends_config.travel_limit)
+                        left_book_end.find_joint_by_name("book_end_joint").set_drive_target(0)
                         
                         right_book_end = right_book_end_builder.build(f"right_book_end_{i}", fix_root_link=True)
                         right_book_end.find_joint_by_name("book_end_joint").set_drive_properties(
                             stiffness=self.book_ends_config.joint_stiffness,
                             damping=self.book_ends_config.joint_damping,
                         )
-                        right_book_end.find_joint_by_name("book_end_joint").set_drive_target(self.book_ends_config.travel_limit)
+                        # right_book_end.find_joint_by_name("book_end_joint").set_drive_target(self.book_ends_config.travel_limit)
+                        right_book_end.find_joint_by_name("book_end_joint").set_drive_target(0)
 
                     else:
                         raise ValueError(f"Invalid book ends mode {self.book_ends_config.mode}")

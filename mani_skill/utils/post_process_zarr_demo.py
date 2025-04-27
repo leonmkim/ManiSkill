@@ -361,9 +361,9 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 # trim each dataset using thresholds on velocity and gripper action
 # #################################################################################
 
-dataset_name = 'sim_demos_leftof4thbook_bookends_nograspedrand_noenvrand_slotrand_20hz_act'
+dataset_name = 'sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act'
 
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250422_134311.zarr')
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250427_135835.zarr')
 assert base_demo_path.exists()
 base_demo = zarr.open(base_demo_path, mode='r')
 base_demo_path = base_demo_path.expanduser()
