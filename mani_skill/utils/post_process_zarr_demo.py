@@ -56,6 +56,28 @@ def recursive_trim_trimmed_arrays(demo_data: ZarrGroup,
             else:
                 recursive_trim_trimmed_arrays(demo_data[key], new_episode_start, new_episode_end, new_untrimmed_episode_start, new_untrimmed_episode_end, pretrimmed=True)
 
+def recursive_trim_trimmed_arrays_to_new_demo(demo_data: ZarrGroup, 
+                                              new_demo_data: ZarrGroup,
+                                  new_episode_start: int, new_episode_end: int, 
+                                  new_untrimmed_episode_start: int, new_untrimmed_episode_end: int, 
+                                  pretrimmed: bool = True):
+    # pretrimmed refers to fact that the non state arrays under actors/articulations groups have been trimmed to exclude one frame per episode (first frame for action, and last frame for observations)
+    for key in demo_data.keys():
+        if isinstance(demo_data[key], ZarrArray) and not key == 'start':
+            if f'{key}' not in new_demo_data:
+                new_demo_data.create_array(key, shape=(0, *demo_data[key].shape[1:]), dtype=demo_data[key].dtype, chunks=(1, *demo_data[key].shape[1:]), compressors=demo_data[key].compressors)
+            if pretrimmed:
+                new_demo_data[key].append(demo_data[key][new_episode_start:new_episode_end])
+            else:
+                new_demo_data[key].append(demo_data[key][new_untrimmed_episode_start:new_untrimmed_episode_end])
+        elif isinstance(demo_data[key], ZarrGroup):
+            if key not in new_demo_data:
+                new_demo_data.create_group(key)
+            if key in ['actors', 'articulations']:
+                recursive_trim_trimmed_arrays_to_new_demo(demo_data[key], new_demo_data[key], new_episode_start, new_episode_end, new_untrimmed_episode_start, new_untrimmed_episode_end, pretrimmed=False)
+            else:
+                recursive_trim_trimmed_arrays_to_new_demo(demo_data[key], new_demo_data[key], new_episode_start, new_episode_end, new_untrimmed_episode_start, new_untrimmed_episode_end, pretrimmed=True)
+
 # delete the non_tmp arrays
 def recursive_delete_non_tmp_arrays(demo_data: ZarrGroup):
     for key in demo_data.keys():
@@ -167,6 +189,101 @@ def trim_start_and_end_of_trajectories(demo: ZarrGroup,
     with open(path_to_json, 'w') as f:
         json.dump(meta_json, f, indent=4)
 
+def recursive_copy_meta_data(base_demo, new_demo):
+    for key in base_demo.keys():
+        if isinstance(base_demo[key], ZarrArray):
+            if key == 'ep_ids':
+                new_demo.create_array(key, shape=base_demo[key].shape, dtype='|S256', chunks=base_demo[key].chunks, compressors=base_demo[key].compressors)
+                for i, episode_id in enumerate(base_demo['ep_ids'][:]):
+                    episode_id_string = episode_id.decode('utf-8')
+                    assert episode_id_string.startswith('traj_')
+                    episode_id_string = f"{episode_id_string}"
+                    new_demo['ep_ids'][i:i+1] = np.array([episode_id_string.encode('utf-8')])
+            else:    
+                new_demo.create_array(key, shape=base_demo[key].shape, dtype=base_demo[key].dtype, chunks=base_demo[key].chunks, compressors=base_demo[key].compressors)
+                new_demo[key][...] = base_demo[key][:]
+        elif isinstance(base_demo[key], ZarrGroup):
+            new_demo.create_group(key)
+            recursive_copy_meta_data(base_demo[key], new_demo[key])
+
+def trim_start_and_end_of_trajectories_in_new_dataset(demo: ZarrGroup, 
+                                    meta_json: dict, 
+                                    path_to_json: Path,
+                                    total_action_norm_threshold: float = .005,
+                                    ):
+    demo_path = demo.store.root
+    new_demo_path = demo_path.with_name(f"{demo_path.stem}_trimmed{demo_path.suffix}")
+    new_demo = zarr.storage.LocalStore(new_demo_path)
+    new_demo = zarr.group(store=new_demo)
+    new_demo.create_group("data")
+    new_demo.create_group("meta")
+
+    # raise NotImplementedError("Theres a bug when using with zarr v3 that doubles the size of the arrays. and pads the original array shape with zeros")
+    # found the bug, it was from the manual rename zarr array function not using the correct shape (just passed in shape of current array, hence the doubling)
+    post_process_logger.info(f"trimming episodes of {path_to_json.name}...")
+    num_episodes = demo['meta']['episode_ends'].shape[0]
+    # if not all_arrays_are_tmp(demo['data']):
+    for trajectory_idx in tqdm(range(num_episodes), desc="Trimming episodes", unit="episode"):
+        episode_start = demo['meta']['episode_ends'][trajectory_idx - 1] if trajectory_idx > 0 else 0
+        episode_end = demo['meta']['episode_ends'][trajectory_idx]
+        untrimmed_episode_start = episode_start + trajectory_idx
+        untrimmed_episode_end = episode_end + trajectory_idx + 1
+
+        episode_length = episode_end - episode_start
+        assert episode_length == meta_json['episodes'][trajectory_idx]['elapsed_steps']
+
+        actions_for_episode = demo['data']['action'][episode_start:episode_end]
+        action_total_norms = np.linalg.norm(actions_for_episode[:,0:6], axis=1, ord=2)
+        threshold_condition_idx = np.argwhere(action_total_norms > total_action_norm_threshold)
+        assert len(threshold_condition_idx) > 0
+        new_episode_start = threshold_condition_idx[0][0] - 1 + episode_start
+        if 'start' in demo['data']:
+            start_signal_for_episode = demo['data']['start'][episode_start:episode_end]
+            start_signal_threshold_idx = np.argwhere(start_signal_for_episode)
+            if len(start_signal_threshold_idx) > 0:
+                # new_episode_start = start_signal_threshold_idx[0][0] + episode_start
+                # find the first threshold_condition_idx that is equal or greater than the start_signal_threshold_idx
+                threshold_condition_idx_after_start_idx = np.argwhere(threshold_condition_idx >= start_signal_threshold_idx[0][0])
+                assert len(threshold_condition_idx_after_start_idx) > 0, "did not find any threshold_condition_idx after start_signal_threshold_idx"
+                new_episode_start = threshold_condition_idx[threshold_condition_idx_after_start_idx[0][0]][0] - 1 + episode_start
+
+        gripper_actions = actions_for_episode[:,6]
+        threshold_condition_idx = np.argwhere(gripper_actions > -1)
+        assert len(threshold_condition_idx) > 0
+        new_episode_end = threshold_condition_idx[0][0] + episode_start
+
+        assert new_episode_start < new_episode_end
+        new_episode_length = new_episode_end - new_episode_start
+
+        start_trim = new_episode_start - episode_start
+        end_trim = episode_end - new_episode_end
+
+        new_untrimmed_episode_start = untrimmed_episode_start + start_trim
+        new_untrimmed_episode_end = untrimmed_episode_end - end_trim
+
+        assert new_episode_length == (new_untrimmed_episode_end - new_untrimmed_episode_start) - 1
+
+        post_process_logger.info(f"Trajectory {trajectory_idx}: trimming {start_trim} frames from the start and {end_trim} frames from the end")
+        recursive_trim_trimmed_arrays_to_new_demo(demo['data'], new_demo['data'], new_episode_start, new_episode_end, new_untrimmed_episode_start, new_untrimmed_episode_end, pretrimmed=True)
+
+        meta_json['episodes'][trajectory_idx]['elapsed_steps'] = int(new_episode_length)
+
+    # copy the meta data
+    recursive_copy_meta_data(demo['meta'], new_demo['meta'])
+
+    episode_start = 0
+    for trajectory_idx in range(num_episodes):
+        episode_length = meta_json['episodes'][trajectory_idx]['elapsed_steps']
+        new_demo['meta']['episode_ends'][trajectory_idx] = episode_length + episode_start
+        episode_start += episode_length
+
+    # change the dtype of episode elapsed_steps to int
+    for episode in meta_json['episodes']:
+        episode['elapsed_steps'] = int(episode['elapsed_steps'])
+    # update the json file
+    with open(path_to_json.with_name(f"{path_to_json.stem}_trimmed.json"), 'w') as f:
+        json.dump(meta_json, f, indent=4)
+
 def recursive_assert_structure(base_demo, new_demo):
     assert set(base_demo.keys()) == set(new_demo.keys()), f"Keys mismatch: {set(base_demo.keys())} vs {set(new_demo.keys())}"
     for key in base_demo.keys():
@@ -176,8 +293,8 @@ def recursive_assert_structure(base_demo, new_demo):
         elif isinstance(base_demo[key], ZarrGroup):
             recursive_assert_structure(base_demo[key], new_demo[key])
 
-def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths: list):
-    post_process_logger.info(f"Merging {len(demos_to_add_to_base_paths)} demos into base demo {base_demo_path.name}...")
+def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths: list, delete_merged_demos: bool = False):
+    post_process_logger.info(f"Merging {len(demos_to_add_to_base_paths)} demo datasets into base demo {base_demo_path.name}...")
     base_demo = zarr.open(base_demo_path, mode='r+')
     base_meta_json_path = base_demo_path.with_suffix('.json')
     with open(base_meta_json_path, 'r') as f:
@@ -189,9 +306,13 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
             new_meta_json = json.load(f)
 
         difference = DeepDiff(base_meta_json, new_meta_json)
+        values_changed_prefixes = [
+            "root['episodes']",
+            "root['commit_info']",
+        ]
         if 'values_changed' in difference:
             # only values that should have changed are "root['episodes']..."
-            assert all([key.startswith("root['episodes']") for key in difference['values_changed'].keys()])
+            assert all(any(key.startswith(prefix) for prefix in values_changed_prefixes) for key in difference['values_changed'].keys())
         if 'iterable_item_added' in difference:
             # only values that should have changed are "root['episodes']..."
             assert all([key.startswith("root['episodes']") for key in difference['iterable_item_added'].keys()])
@@ -229,9 +350,10 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
             json.dump(base_meta_json, f, indent=4)
 
         # then delete the new demo zarr and json
-        shutil.rmtree(new_demo_path)
+        if delete_merged_demos:
+            shutil.rmtree(new_demo_path)
 
-        new_meta_json_path.unlink()
+            new_meta_json_path.unlink()
         
 def correct_faulty_trimming(demo_data: ZarrGroup,
                             to_remove_start_idx: int = 0,
@@ -328,8 +450,12 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 # recursive_rename_tmp_arrays(demo['data'])
 
 #%%
+demo = zarr.open('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/519_sim_demos_w_recovery_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr', mode='r')
+# demo_json = demo.store.root.with_suffix('.json')
+# with open(demo_json, 'r') as f:
+#     meta_json = json.load(f)
 # # # create video for first episode
-# episode_idx = 238
+# episode_idx = 2
 # num_episodes = demo['meta']['episode_ends'].shape[0]
 
 # episode_start = demo['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
@@ -355,26 +481,40 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 #     video_name=f'episode_{episode_idx}_video',
 #     fps=20,
 # )
+# #%%
+# demo_2 = zarr.open('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr', mode='r')
+# demo_2_json = demo_2.store.root.with_suffix('.json')
+# with open(demo_2_json, 'r') as f:
+#     meta_json_2 = json.load(f)
+
+# difference = DeepDiff(meta_json, meta_json_2)
 #%%
 #%%
 # #################################################################################
 # trim each dataset using thresholds on velocity and gripper action
 # #################################################################################
 
-dataset_name = 'sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act'
+dataset_name = 'sim_demos_w_recovery_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act'
+dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
 
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250427_135835.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_175948_trimmed.zarr')
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
 assert base_demo_path.exists()
 base_demo = zarr.open(base_demo_path, mode='r')
 base_demo_path = base_demo_path.expanduser()
-demos_to_add_to_base_paths = list()
-for demo_path in demos_to_add_to_base_paths:
+
+# demos_to_trim = [
+#     Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_194658.zarr'),
+# ]
+demos_to_trim = list()
+for demo_path in demos_to_trim:
     assert demo_path.exists()
     demo_path = demo_path.expanduser()
+
 #%%
 
-all_demo_paths = [base_demo_path] + demos_to_add_to_base_paths
-for path_to_demo in all_demo_paths:
+for path_to_demo in demos_to_trim:
     path_to_demo = path_to_demo.expanduser()
     demo = zarr.open(path_to_demo, mode='r+')
 
@@ -384,12 +524,19 @@ for path_to_demo in all_demo_paths:
     num_episodes = len(demo['meta']['episode_ends'][:])
     assert num_episodes == len(meta_json['episodes'])
 
-    trim_start_and_end_of_trajectories(demo, meta_json, path_to_json, total_action_norm_threshold=.005)
+    # trim_start_and_end_of_trajectories(demo, meta_json, path_to_json, total_action_norm_threshold=.005)
+    trim_start_and_end_of_trajectories_in_new_dataset(demo, meta_json, path_to_json, total_action_norm_threshold=.005)
 
 #%%
 # ###########################
 # merge datasets together
 # ###########################
+demos_to_add_to_base_paths = [
+    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_194658_trimmed.zarr'),
+]
+for demo_path in demos_to_add_to_base_paths:
+    assert demo_path.exists()
+    demo_path = demo_path.expanduser()
 
 if len(demos_to_add_to_base_paths) > 0:
     merge_demos_into_base_demo(base_demo_path, demos_to_add_to_base_paths)
@@ -411,14 +558,14 @@ for episode_dict in meta_json['episodes']:
 meta_json['max_demo_length'] = max_demo_length
 demo['meta'].attrs['max_demo_length'] = max_demo_length
 # update the json file
-with open(path_to_json, 'w') as f:
+with open(base_demo_path.with_suffix('.json'), 'w') as f:
     json.dump(meta_json, f, indent=4)
 
 # move the zarr and json file to a directory
 # dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
 total_num_demos = len(demo['meta']['episode_ends'][:])
 dataset_name = f'{total_num_demos}_' + dataset_name
-dataset_root_dir = base_demo_path.parent
+# dataset_root_dir = base_demo_path.parent
 
 new_dataset_dir = dataset_root_dir / dataset_name
 new_dataset_dir.mkdir(parents=True, exist_ok=True)
