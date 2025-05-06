@@ -419,7 +419,7 @@ def get_plan_target_poses_in_current_pose(current_pose, all_target_poses_in_worl
     elif rotation_representation == '6d':
         rotation_dimension = 6
 
-    plan_target_poses_in_current_pose = torch.zeros((all_target_poses_in_world.shape[0], 3+rotation_dimension))
+    plan_target_poses_in_current_pose = torch.zeros((all_target_poses_in_world.shape[0], 3+rotation_dimension), dtype=torch.float32)
     plan_target_poses_in_current_pose[:, 0:3] = all_target_poses_in_world[:, 0:3] - current_pose[:, 0:3]
     target_rotation_from_current_pose = transforms.quaternion_multiply(all_target_poses_in_world[:, 3:7], transforms.quaternion_invert(current_pose[:, 3:7]))
     if rotation_representation == 'axis_angle':
