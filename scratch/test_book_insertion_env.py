@@ -28,7 +28,7 @@ import time
 
 from mani_skill.utils.teleoperation import SpacemouseInput
 #%%
-spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
+spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,1,1])
 desired_viewing_size = (256, 256)
 
 #%%
@@ -78,6 +78,7 @@ env = gym.make(
     ),
     # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
+    # control_mode="pd_ee_target_delta_pose_unnormalized",
     # control_mode="pd_ee_delta_pose",
     sim_config=dict(
         sim_freq=100, # default 100

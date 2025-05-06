@@ -450,7 +450,10 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 # recursive_rename_tmp_arrays(demo['data'])
 
 #%%
-demo = zarr.open('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/519_sim_demos_w_recovery_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr', mode='r')
+
+# demo = zarr.open('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr', mode='r')
+
+#%%
 # demo_json = demo.store.root.with_suffix('.json')
 # with open(demo_json, 'r') as f:
 #     meta_json = json.load(f)
@@ -499,15 +502,15 @@ dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/tel
 
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_175948_trimmed.zarr')
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250502_215409.zarr')
 assert base_demo_path.exists()
 base_demo = zarr.open(base_demo_path, mode='r')
 base_demo_path = base_demo_path.expanduser()
 
-# demos_to_trim = [
-#     Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_194658.zarr'),
-# ]
-demos_to_trim = list()
+demos_to_trim = [
+    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250502_215409.zarr'),
+]
+# demos_to_trim = list()
 for demo_path in demos_to_trim:
     assert demo_path.exists()
     demo_path = demo_path.expanduser()
@@ -531,9 +534,10 @@ for path_to_demo in demos_to_trim:
 # ###########################
 # merge datasets together
 # ###########################
-demos_to_add_to_base_paths = [
-    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_194658_trimmed.zarr'),
-]
+# demos_to_add_to_base_paths = [
+#     Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_194658_trimmed.zarr'),
+# ]
+demos_to_add_to_base_paths = list()
 for demo_path in demos_to_add_to_base_paths:
     assert demo_path.exists()
     demo_path = demo_path.expanduser()

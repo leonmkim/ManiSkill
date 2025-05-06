@@ -15,6 +15,7 @@ from mani_skill.trajectory.utils import index_dict, dict_to_list_of_dicts
 from mani_skill.utils.visualization.misc import images_to_video
 from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
+from mani_skill.envs.tasks.tabletop.book_insertion import GraspedBookConfig, BookEndsConfig, EnvBooksConfig, SlotConfig
 
 import zarr
 ZARR_VERSION=int(zarr.__version__.split('.')[0])
@@ -79,7 +80,8 @@ def construct_env_state_dict(zarr_data, index):
 # # scene.show()
 #%%
 desired_viewing_size = (256, 256)
-path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/240_sim_demos_left_of_4th_book_bookends_no_env_rand_20hz_act")
+path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act")
+
 path_to_zarr = path_to_demo_root_dir / "demos.zarr"
 path_to_json = path_to_demo_root_dir / "demos.json"
 
@@ -123,7 +125,8 @@ if record_contact_features:
 # with open(path_to_json, 'w') as f:
 #     json.dump(json_data, f, indent=4)
 #%%
-
+joint_stiffness = 100.0
+joint_damping = 2*np.sqrt(joint_stiffness)
 ## testing book insertion task
 env = gym.make(
     # "LiftPegUpright-v1", 
@@ -135,14 +138,34 @@ env = gym.make(
     render_contact_map=False,
     render_dtc_maps=False,
     render_normals_maps=False,
-    spawn_new_env_books=False,
     suppress_evaluation=True, 
-    book_ends_dict=dict(
-        mode='dynamic',
-        height=0.1,
-        mass=3.5,
-        friction=0.15,
+    book_ends_config=BookEndsConfig(
+        mode='spring',
+        height=0.25,
+        wall_height=0.25,
+        mass=1.0,
+        friction=0.0,
         color="#808080", # default color
+        joint_stiffness=joint_stiffness, 
+        joint_damping=joint_damping,
+        travel_limit=0.125,
+    ),
+    grasped_book_config=GraspedBookConfig(
+        randomize_color=False,
+        randomize_density=False,
+        randomize_length=False,
+        randomize_height=False,
+        randomize_width=False,
+    ),
+    env_books_config=EnvBooksConfig(
+        randomize_color=False,
+        randomize_density=False,
+        randomize_height=False,
+        randomize_length=False,
+        randomize_width=False,
+    ),
+    slot_config=SlotConfig(
+        y_randomization_bounds=[-0.05, 0.05],
     ),
     # render_mode="sensors", 
     render_backend="gpu",

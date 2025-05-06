@@ -12,6 +12,9 @@ import torch
 
 from mani_skill.utils.structs.types import Array, Device
 
+from pytorch3d import transforms
+
+
 # -------------------------------------------------------------------------- #
 # Utilities for working with tensors, numpy arrays, and batched data
 # -------------------------------------------------------------------------- #
@@ -383,3 +386,50 @@ def to_numpy(array: Union[Array, Sequence], dtype=None) -> np.ndarray:
 # -------------------------------------------------------------------------- #
 # Utilities for working with quaternions
 # -------------------------------------------------------------------------- #
+
+
+# -------------------------------------------------------------------------- #
+# Leon: Utilities for changing parameterizations of actions
+# -------------------------------------------------------------------------- #
+
+def get_plan_target_poses_in_current_pose(current_pose, all_target_poses_in_world, rotation_representation='axis_angle'):
+    '''
+    Args:
+        current_pose: (1, 7)
+        all_target_poses_in_world: (N, 7)
+    Returns:
+        all_target_poses_in_current_pose: (N, 3+R) where R is 3 for axis angle or 4 for quaternion or 6 for 6D representation 
+    '''
+    assert rotation_representation in ['axis_angle', 'quaternion', '6d'], f"rotation_representation {rotation_representation} not supported"
+    assert len(current_pose.shape) == 2, f"current_pose shape {current_pose.shape} not supported"
+    assert len(all_target_poses_in_world.shape) == 2, f"all_target_poses_in_world shape {all_target_poses_in_world.shape} not supported"
+    assert len(current_pose.shape) == 2, f"current_pose shape {current_pose.shape} not supported"
+    convert_back_to_numpy = False
+    if isinstance(current_pose, np.ndarray):
+        current_pose = torch.from_numpy(current_pose)
+        convert_back_to_numpy = True
+    if isinstance(all_target_poses_in_world, np.ndarray):
+        all_target_poses_in_world = torch.from_numpy(all_target_poses_in_world)
+        convert_back_to_numpy = True
+        
+    if rotation_representation == 'axis_angle':
+        rotation_dimension = 3
+    elif rotation_representation == 'quaternion':
+        rotation_dimension = 4
+    elif rotation_representation == '6d':
+        rotation_dimension = 6
+
+    plan_target_poses_in_current_pose = torch.zeros((all_target_poses_in_world.shape[0], 3+rotation_dimension))
+    plan_target_poses_in_current_pose[:, 0:3] = all_target_poses_in_world[:, 0:3] - current_pose[:, 0:3]
+    target_rotation_from_current_pose = transforms.quaternion_multiply(all_target_poses_in_world[:, 3:7], transforms.quaternion_invert(current_pose[:, 3:7]))
+    if rotation_representation == 'axis_angle':
+        plan_target_poses_in_current_pose[:, 3:] = transforms.quaternion_to_axis_angle(target_rotation_from_current_pose)
+    elif rotation_representation == 'quaternion':
+        plan_target_poses_in_current_pose[:, 3:] = target_rotation_from_current_pose
+    elif rotation_representation == '6d':
+        target_rotation_from_current_pose_matrix = transforms.quaternion_to_matrix(target_rotation_from_current_pose)
+        plan_target_poses_in_current_pose[:, 3:] = transforms.matrix_to_rotation_6d(target_rotation_from_current_pose_matrix)
+    if convert_back_to_numpy:
+        plan_target_poses_in_current_pose = plan_target_poses_in_current_pose.cpu().numpy()
+    return plan_target_poses_in_current_pose
+
