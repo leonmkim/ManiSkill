@@ -419,7 +419,7 @@ def get_plan_target_poses_in_current_pose(current_pose, all_target_poses_in_worl
     elif rotation_representation == '6d':
         rotation_dimension = 6
 
-    plan_target_poses_in_current_pose = torch.zeros((all_target_poses_in_world.shape[0], 3+rotation_dimension), dtype=torch.float32)
+    plan_target_poses_in_current_pose = torch.zeros((all_target_poses_in_world.shape[0], 3+rotation_dimension), dtype=torch.float32, device=current_pose.device)
     plan_target_poses_in_current_pose[:, 0:3] = all_target_poses_in_world[:, 0:3] - current_pose[:, 0:3]
     target_rotation_from_current_pose = transforms.quaternion_multiply(all_target_poses_in_world[:, 3:7], transforms.quaternion_invert(current_pose[:, 3:7]))
     if rotation_representation == 'axis_angle':
@@ -433,3 +433,31 @@ def get_plan_target_poses_in_current_pose(current_pose, all_target_poses_in_worl
         plan_target_poses_in_current_pose = plan_target_poses_in_current_pose.cpu().numpy()
     return plan_target_poses_in_current_pose
 
+from scipy.spatial.transform import Rotation as R
+def get_plan_target_poses_in_current_pose_scipy(current_pose, all_target_poses_in_world, rotation_representation='axis_angle'):
+    '''
+    Args:
+        current_pose: (1, 7)
+        all_target_poses_in_world: (N, 7)
+    Returns:
+        all_target_poses_in_current_pose: (N, 3+R) where R is 3 for axis angle or 4 for quaternion or 6 for 6D representation 
+    '''
+    assert rotation_representation in ['axis_angle', 'quaternion',], f"rotation_representation {rotation_representation} not supported"
+    assert len(current_pose.shape) == 2, f"current_pose shape {current_pose.shape} not supported"
+    assert len(all_target_poses_in_world.shape) == 2, f"all_target_poses_in_world shape {all_target_poses_in_world.shape} not supported"
+    assert len(current_pose.shape) == 2, f"current_pose shape {current_pose.shape} not supported"
+    if rotation_representation == 'axis_angle':
+        rotation_dimension = 3
+    elif rotation_representation == 'quaternion':
+        rotation_dimension = 4
+    elif rotation_representation == '6d':
+        rotation_dimension = 6
+
+    plan_target_poses_in_current_pose = np.zeros((all_target_poses_in_world.shape[0], 3+rotation_dimension), dtype=np.float32)
+    plan_target_poses_in_current_pose[:, 0:3] = all_target_poses_in_world[:, 0:3] - current_pose[:, 0:3]
+    target_rotation_from_current_pose = R.from_quat(all_target_poses_in_world[:, 3:7], scalar_first=True) * R.from_quat(current_pose[:, 3:7], scalar_first=True).inv()
+    if rotation_representation == 'axis_angle':
+        plan_target_poses_in_current_pose[:, 3:] = target_rotation_from_current_pose.as_rotvec()
+    elif rotation_representation == 'quaternion':
+        plan_target_poses_in_current_pose[:, 3:] = target_rotation_from_current_pose.as_quat(scalar_first=True)
+    return plan_target_poses_in_current_pose
