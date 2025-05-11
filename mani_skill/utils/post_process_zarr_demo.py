@@ -306,10 +306,14 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
         with open(new_meta_json_path, 'r') as f:
             new_meta_json = json.load(f)
 
+        if new_meta_json['max_demo_length'] > base_meta_json['max_demo_length']:
+            base_meta_json['max_demo_length'] = new_meta_json['max_demo_length']
+
         difference = DeepDiff(base_meta_json, new_meta_json)
         values_changed_prefixes = [
             "root['episodes']",
             "root['commit_info']",
+            "root['max_demo_length']",
         ]
         if 'values_changed' in difference:
             # only values that should have changed are "root['episodes']..."
@@ -555,7 +559,16 @@ demos_to_add_to_base_paths = [
 for demo_path in demos_to_add_to_base_paths:
     assert demo_path.exists()
     demo_path = demo_path.expanduser()
+# #%%
+# base_demo_json_path = base_demo_path.with_suffix('.json')
+# with open(base_demo_json_path, 'r') as f:
+#     base_meta_json = json.load(f)
+# demo_to_add_to_base_path_json_path = demos_to_add_to_base_paths[0].with_suffix('.json')
+# with open(demo_to_add_to_base_path_json_path, 'r') as f:
+#     demo_to_add_to_base_meta_json = json.load(f)
 
+# difference = DeepDiff(base_meta_json, demo_to_add_to_base_meta_json)
+#%%
 if len(demos_to_add_to_base_paths) > 0:
     merge_demos_into_base_demo(base_demo_path, demos_to_add_to_base_paths)
 
