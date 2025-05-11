@@ -29,7 +29,7 @@ import logging
 record_logger = logging.getLogger("record_logger")
 
 #%%
-spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,1,1,1])
+spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
 desired_viewing_size = (256, 256)
 output_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop")
 record_demonstrations = True
@@ -65,11 +65,11 @@ env = gym.make(
         travel_limit=0.125,
     ),
     grasped_book_config=GraspedBookConfig(
-        randomize_color=False,
+        randomize_color=True,
         randomize_density=False,
         randomize_length=False,
-        randomize_height=False,
-        randomize_width=False,
+        randomize_height=True,
+        randomize_width=True,
     ),
     env_books_config=EnvBooksConfig(
         randomize_color=False,
@@ -79,7 +79,8 @@ env = gym.make(
         randomize_width=False,
     ),
     slot_config=SlotConfig(
-        y_randomization_bounds=[-0.05, 0.05],
+        # y_randomization_bounds=[-0.05, 0.05],
+        y_randomization_bounds=0.0,
     ),
     # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
@@ -114,7 +115,7 @@ if record_demonstrations:
         source_type="teleoperation",
         source_desc="teleoperation via spacemouse",
     )
-seed = 0
+seed = 700
 num_trajs = 0
 #%%
 sim_dt = 1.0 / env.sim_config.sim_freq

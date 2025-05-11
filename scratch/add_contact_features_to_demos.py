@@ -80,7 +80,7 @@ def construct_env_state_dict(zarr_data, index):
 # # scene.show()
 #%%
 desired_viewing_size = (256, 256)
-path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act")
+path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/532_sim_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act")
 
 path_to_zarr = path_to_demo_root_dir / "demos.zarr"
 path_to_json = path_to_demo_root_dir / "demos.json"
@@ -151,11 +151,11 @@ env = gym.make(
         travel_limit=0.125,
     ),
     grasped_book_config=GraspedBookConfig(
-        randomize_color=False,
+        randomize_color=True,
         randomize_density=False,
         randomize_length=False,
-        randomize_height=False,
-        randomize_width=False,
+        randomize_height=True,
+        randomize_width=True,
     ),
     env_books_config=EnvBooksConfig(
         randomize_color=False,
@@ -165,7 +165,8 @@ env = gym.make(
         randomize_width=False,
     ),
     slot_config=SlotConfig(
-        y_randomization_bounds=[-0.05, 0.05],
+        # y_randomization_bounds=[-0.05, 0.05],
+        y_randomization_bounds=0.0,
     ),
     # render_mode="sensors", 
     render_backend="gpu",

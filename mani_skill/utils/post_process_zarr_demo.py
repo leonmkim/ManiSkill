@@ -230,12 +230,12 @@ def trim_start_and_end_of_trajectories_in_new_dataset(demo: ZarrGroup,
         untrimmed_episode_end = episode_end + trajectory_idx + 1
 
         episode_length = episode_end - episode_start
-        assert episode_length == meta_json['episodes'][trajectory_idx]['elapsed_steps']
+        assert episode_length == meta_json['episodes'][trajectory_idx]['elapsed_steps'], f"episode_length: {episode_length} != meta_json['episodes'][trajectory_idx]['elapsed_steps']: {meta_json['episodes'][trajectory_idx]['elapsed_steps']}"
 
         actions_for_episode = demo['data']['action'][episode_start:episode_end]
         action_total_norms = np.linalg.norm(actions_for_episode[:,0:6], axis=1, ord=2)
         threshold_condition_idx = np.argwhere(action_total_norms > total_action_norm_threshold)
-        assert len(threshold_condition_idx) > 0
+        assert len(threshold_condition_idx) > 0, f"did not find any action norms greater than {total_action_norm_threshold} for trajectory_idx: {trajectory_idx}"
         new_episode_start = threshold_condition_idx[0][0] - 1 + episode_start
         if 'start' in demo['data']:
             start_signal_for_episode = demo['data']['start'][episode_start:episode_end]
@@ -244,12 +244,13 @@ def trim_start_and_end_of_trajectories_in_new_dataset(demo: ZarrGroup,
                 # new_episode_start = start_signal_threshold_idx[0][0] + episode_start
                 # find the first threshold_condition_idx that is equal or greater than the start_signal_threshold_idx
                 threshold_condition_idx_after_start_idx = np.argwhere(threshold_condition_idx >= start_signal_threshold_idx[0][0])
-                assert len(threshold_condition_idx_after_start_idx) > 0, "did not find any threshold_condition_idx after start_signal_threshold_idx"
+                assert len(threshold_condition_idx_after_start_idx) > 0, f"did not find any threshold_condition_idx after start_signal_threshold_idx for trajectory_idx: {trajectory_idx}"
                 new_episode_start = threshold_condition_idx[threshold_condition_idx_after_start_idx[0][0]][0] - 1 + episode_start
 
         gripper_actions = actions_for_episode[:,6]
         threshold_condition_idx = np.argwhere(gripper_actions > -1)
-        assert len(threshold_condition_idx) > 0
+        assert len(threshold_condition_idx) > 0, f"did not find any gripper actions greater than -1 for trajectory_idx: {trajectory_idx}"
+
         new_episode_end = threshold_condition_idx[0][0] + episode_start
 
         assert new_episode_start < new_episode_end
@@ -403,13 +404,26 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 
 # traverse_tree(demo)
 #%%
-# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/4_sim_demos_leftof4thbook_bookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250509_162111.zarr')
 # assert base_demo_path.exists()
-# # # # base_demo_num_episodes = 10
+# # # # # base_demo_num_episodes = 10
 # base_demo = zarr.open(base_demo_path, 'r')
-# episode_idx = 2
+# episode_idx = 99
 # episode_start_idx = 0 if episode_idx == 0 else base_demo['meta']['episode_ends'][episode_idx - 1]
 # episode_end_idx = base_demo['meta']['episode_ends'][episode_idx]
+# gripper_actions = base_demo['data']['action'][episode_start_idx:episode_end_idx][:,6]
+
+# start_signal_for_episode = base_demo['data']['start'][episode_start_idx:episode_end_idx]
+# start_signal_threshold_idx = np.argwhere(start_signal_for_episode)
+
+# rgb_frames = base_demo['data']['observation.rgb'][episode_start_idx:episode_end_idx]
+
+# images_to_video(
+#     images=rgb_frames,
+#     output_dir='./',
+#     video_name=f'episode_{episode_idx}_video',
+#     fps=20,
+#     )
 # episode_start = base_demo['data']['start'][episode_start_idx:episode_end_idx]
 # if np.any(episode_start):
 #     start_idx = np.argwhere(episode_start)[0][0]
@@ -497,20 +511,15 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 # trim each dataset using thresholds on velocity and gripper action
 # #################################################################################
 
-dataset_name = 'sim_demos_w_recovery_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act'
+dataset_name = 'sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act'
 dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
 
-# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
-# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_175948_trimmed.zarr')
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250502_215409.zarr')
-assert base_demo_path.exists()
-base_demo = zarr.open(base_demo_path, mode='r')
-base_demo_path = base_demo_path.expanduser()
 
-demos_to_trim = [
-    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250502_215409.zarr'),
-]
-# demos_to_trim = list()
+# demos_to_trim = [
+#     Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250509_162111.zarr'),
+#     # Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250508_201027.zarr'),
+# ]
+demos_to_trim = list()
 for demo_path in demos_to_trim:
     assert demo_path.exists()
     demo_path = demo_path.expanduser()
@@ -534,10 +543,15 @@ for path_to_demo in demos_to_trim:
 # ###########################
 # merge datasets together
 # ###########################
-# demos_to_add_to_base_paths = [
-#     Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_194658_trimmed.zarr'),
-# ]
-demos_to_add_to_base_paths = list()
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_175948_trimmed.zarr')
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/700_sim_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
+assert base_demo_path.exists()
+base_demo_path = base_demo_path.expanduser()
+demos_to_add_to_base_paths = [
+    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/532_sim_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act/demos.zarr'),
+]
+# demos_to_add_to_base_paths = list()
 for demo_path in demos_to_add_to_base_paths:
     assert demo_path.exists()
     demo_path = demo_path.expanduser()
