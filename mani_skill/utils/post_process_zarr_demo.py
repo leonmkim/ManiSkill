@@ -30,10 +30,15 @@ post_process_logger = logging.getLogger("post_process_logger")
 # post_process_logger.setLevel(logging.INFO)
 
 #%%
-def recursive_append_new_demo_data(base_demo, new_demo):
+def recursive_append_new_demo_data(base_demo, new_demo, copy_over_n_chunks_at_a_time: int = 500):
     for key in base_demo.keys():
         if isinstance(base_demo[key], ZarrArray):
-            base_demo[key].append(new_demo[key][:])
+            # base_demo[key].append(new_demo[key][:])
+            # need to copy over n chunks at a time because the array is too large
+            for i in tqdm(range(0, new_demo[key].shape[0], copy_over_n_chunks_at_a_time), desc=f"Appending {key}", unit="chunk"):
+                start = i
+                end = min(i + copy_over_n_chunks_at_a_time, new_demo[key].shape[0])
+                base_demo[key].append(new_demo[key][start:end])
         elif isinstance(base_demo[key], ZarrGroup):
             recursive_append_new_demo_data(base_demo[key], new_demo[key])
 
@@ -295,6 +300,11 @@ def recursive_assert_structure(base_demo, new_demo):
             recursive_assert_structure(base_demo[key], new_demo[key])
 
 def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths: list, delete_merged_demos: bool = False):
+    # before merging, make a copy of the base demo
+    base_demo_copy_path = base_demo_path.with_name(f"{base_demo_path.stem}_copy{base_demo_path.suffix}")
+    if not base_demo_copy_path.exists():
+        post_process_logger.info(f"Copying base demo {base_demo_path.name} to {base_demo_copy_path.name}...")
+        shutil.copytree(base_demo_path, base_demo_copy_path)
     post_process_logger.info(f"Merging {len(demos_to_add_to_base_paths)} demo datasets into base demo {base_demo_path.name}...")
     base_demo = zarr.open(base_demo_path, mode='r+')
     base_meta_json_path = base_demo_path.with_suffix('.json')
@@ -330,16 +340,24 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
         last_episode_end_of_base_demo = base_demo['meta']['episode_ends'][-1]
         base_demo_num_episodes = base_demo['meta']['episode_ends'].shape[0]
 
-        # first update episode_ends of new demo
-        new_demo['meta']['episode_ends'][...] += last_episode_end_of_base_demo 
+        # check if new_demo has already been modified
+        new_demo_already_modified = False
+        first_episode_elapsed_steps = new_meta_json['episodes'][0]['elapsed_steps']
+        if first_episode_elapsed_steps != new_demo['meta']['episode_ends'][0]:
+            new_demo_already_modified = True
+            post_process_logger.info(f"New demo {new_demo_path.name} has already been modified, skipping trimming...")
 
-        # also update the ep_ids of the new demo
-        for i, episode_id in enumerate(new_demo['meta']['ep_ids'][:]):
-            episode_id_string = episode_id.decode('utf-8')
-            assert episode_id_string.startswith('traj_')
-            current_episode_id = int(episode_id_string.split('_')[-1])
-            new_episode_id = f'traj_{current_episode_id + base_demo_num_episodes}'
-            new_demo['meta']['ep_ids'][i:i+1] = [new_episode_id.encode('utf-8')]
+        # first update episode_ends of new demo
+        if not new_demo_already_modified:
+            new_demo['meta']['episode_ends'][...] += last_episode_end_of_base_demo 
+
+            # also update the ep_ids of the new demo
+            for i, episode_id in enumerate(new_demo['meta']['ep_ids'][:]):
+                episode_id_string = episode_id.decode('utf-8')
+                assert episode_id_string.startswith('traj_')
+                current_episode_id = int(episode_id_string.split('_')[-1])
+                new_episode_id = f'traj_{current_episode_id + base_demo_num_episodes}'
+                new_demo['meta']['ep_ids'][i:i+1] = [new_episode_id.encode('utf-8')]
         
         for episode_dict in new_meta_json['episodes']:
             episode_dict['episode_id'] += base_demo_num_episodes
