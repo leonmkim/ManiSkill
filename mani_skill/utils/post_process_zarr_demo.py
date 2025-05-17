@@ -14,11 +14,11 @@ import numpy as np
 
 import json
 import tqdm
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 import shutil
 
-from mani_skill.utils.visualization.misc import images_to_video, tile_images
+# from mani_skill.utils.visualization.misc import images_to_video, tile_images
 
 from tqdm import tqdm
 
@@ -305,9 +305,15 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
     if not base_demo_copy_path.exists():
         post_process_logger.info(f"Copying base demo {base_demo_path.name} to {base_demo_copy_path.name}...")
         shutil.copytree(base_demo_path, base_demo_copy_path)
+    # also copy the json file
+    base_meta_json_path = base_demo_path.with_suffix('.json')
+    base_meta_json_copy_path = base_meta_json_path.with_name(f"{base_meta_json_path.stem}_copy{base_meta_json_path.suffix}")
+    if not base_meta_json_copy_path.exists():
+        post_process_logger.info(f"Copying base demo json {base_meta_json_path.name} to {base_meta_json_copy_path.name}...")
+        shutil.copy(base_meta_json_path, base_meta_json_copy_path)
+
     post_process_logger.info(f"Merging {len(demos_to_add_to_base_paths)} demo datasets into base demo {base_demo_path.name}...")
     base_demo = zarr.open(base_demo_path, mode='r+')
-    base_meta_json_path = base_demo_path.with_suffix('.json')
     with open(base_meta_json_path, 'r') as f:
         base_meta_json = json.load(f)
     for new_demo_path in demos_to_add_to_base_paths:
@@ -345,7 +351,7 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
         first_episode_elapsed_steps = new_meta_json['episodes'][0]['elapsed_steps']
         if first_episode_elapsed_steps != new_demo['meta']['episode_ends'][0]:
             new_demo_already_modified = True
-            post_process_logger.info(f"New demo {new_demo_path.name} has already been modified, skipping trimming...")
+            post_process_logger.info(f"New demo {new_demo_path.name} has already been modified, skipping updating...")
 
         # first update episode_ends of new demo
         if not new_demo_already_modified:
@@ -534,7 +540,8 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 # #################################################################################
 
 dataset_name = 'sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act'
-dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
+# dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
+dataset_root_dir = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1')
 
 
 # demos_to_trim = [
@@ -567,12 +574,13 @@ for path_to_demo in demos_to_trim:
 # ###########################
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_175948_trimmed.zarr')
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/700_sim_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
+base_demo_path = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/700_sim_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act_copy/demos.zarr')
 assert base_demo_path.exists()
 base_demo_path = base_demo_path.expanduser()
 demos_to_add_to_base_paths = [
-    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/532_sim_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act/demos.zarr'),
+    Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/532_sim_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act/demos.zarr'),
 ]
+
 # demos_to_add_to_base_paths = list()
 for demo_path in demos_to_add_to_base_paths:
     assert demo_path.exists()
