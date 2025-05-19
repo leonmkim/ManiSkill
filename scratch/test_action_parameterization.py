@@ -55,7 +55,7 @@ def construct_env_state_dict(zarr_data, index):
 
     return env_state_dict
 #%%
-demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/1_sim_demos_w_recovery_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act')
+demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act')
 demo = zarr.open(demo_path / 'demos.zarr', mode='r')
 json_data = load_json(demo_path / 'demos.json')
 #%%
@@ -155,9 +155,10 @@ assert episode_end_idx - episode_start_idx == num_steps, f"mismatch in episode s
 from mani_skill.utils.common import get_plan_target_poses_in_current_pose
 action_plan_length = 28
 assert num_steps >= action_plan_length, f"num_steps {num_steps} < action_plan_length {action_plan_length}"
-idx_in_episode = 0
+idx_in_episode = 80
 idx = episode_start_idx + idx_in_episode
-
+env_state_idx = idx + episode_idx
+#%%
 pos_lower_limit = -0.1
 pos_upper_limit = 0.1
 rot_lower_limit = -0.1
@@ -170,10 +171,26 @@ gt_delta_actions_normalized = torch.from_numpy(demo['data']['action'][idx:idx+ac
 gt_delta_actions = gt_delta_actions_normalized.clone()
 gt_delta_actions[:, :6] = .01* (gt_delta_actions_normalized[:, :6] - 0.5 * (action_high + action_low)) / (0.5 * (action_high - action_low))
 gt_delta_actions[:, 3:6] *= -1.0 # for some reason, the rotation flips sign when they normalize the actions
-
+current_target_pose = torch.from_numpy(demo['data']['actors']['target_EE_pose'][env_state_idx:env_state_idx+1])
 current_pose = torch.from_numpy(demo['data']['observation.state'][idx:idx+1, :7])
-plan_target_poses = torch.from_numpy(demo['data']['actors']['target_EE_pose'][idx+1:idx+1+action_plan_length])
-plan_target_poses_in_current_pose = get_plan_target_poses_in_current_pose(current_pose, plan_target_poses, rotation_representation='axis_angle')
+current_target_pose_in_current_pose = get_plan_target_poses_in_current_pose(current_pose, current_target_pose, rotation_representation='quaternion')
+
+def unroll_delta_actions(delta_actions, init_pose):
+    gt_target_poses_in_current_pose = torch.zeros(action_plan_length, 7, dtype=delta_actions.dtype, device=delta_actions.device)
+    gt_target_poses_in_current_pose[:,:3] = init_pose[:, :3] + torch.cumsum(delta_actions[:, :3], dim=0)
+    gt_delta_quaternions = transforms.axis_angle_to_quaternion(delta_actions[:, 3:6])
+    for i in range(len(gt_delta_quaternions)):
+        if i == 0:
+            gt_target_poses_in_current_pose[i, 3:7] = transforms.quaternion_multiply(gt_delta_quaternions[i], init_pose[0, 3:7])
+        else:
+            gt_target_poses_in_current_pose[i, 3:7] = transforms.quaternion_multiply(gt_delta_quaternions[i], gt_target_poses_in_current_pose[i-1, 3:7])
+    return gt_target_poses_in_current_pose
+
+gt_target_poses_in_current_pose = unroll_delta_actions(gt_delta_actions, current_target_pose_in_current_pose)
+
+plan_target_poses = torch.from_numpy(demo['data']['actors']['target_EE_pose'][env_state_idx+1:env_state_idx+1+action_plan_length])
+# plan_target_poses_in_current_pose = get_plan_target_poses_in_current_pose(current_pose, plan_target_poses, rotation_representation='axis_angle')
+plan_target_poses_in_current_pose = get_plan_target_poses_in_current_pose(current_pose, plan_target_poses, rotation_representation='quaternion')
 #%%
 from mani_skill.utils.common import get_plan_target_poses_in_current_pose_scipy
 plan_target_poses_in_current_pose_scipy = get_plan_target_poses_in_current_pose_scipy(current_pose, plan_target_poses, rotation_representation='axis_angle')

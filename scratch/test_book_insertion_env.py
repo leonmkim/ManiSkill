@@ -18,6 +18,7 @@ from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
 
 from mani_skill.envs.tasks.tabletop.book_insertion import GraspedBookConfig, BookEndsConfig, EnvBooksConfig, SlotConfig
 
+from mani_skill.utils.wrappers.record_rerun import RecordEpisodeRerun
 import multiprocessing
 
 from pathlib import Path
@@ -28,7 +29,7 @@ import time
 
 from mani_skill.utils.teleoperation import SpacemouseInput
 #%%
-spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,1,1])
+spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
 desired_viewing_size = (256, 256)
 
 #%%
@@ -97,6 +98,15 @@ env = gym.make(
         shader_pack="minimal"
     )
 )
+#%%
+
+rerun_output_dir = Path("/mnt/crucialSSD/maniskill_evals/rerun_test")
+import datetime
+rerun_output_dir = rerun_output_dir / datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+env = RecordEpisodeRerun(
+    env,
+    output_dir=rerun_output_dir,
+)
 # env = gym.make(
 #     # "LiftPegUpright-v1", 
 #     "SpringArticulationEnv-v0", 
@@ -126,19 +136,21 @@ env = gym.make(
 #     )
 # )
 # seed = 0
+#%%
 seed = 1_000_000
 num_trajs = 0
 #%%
 sim_dt = 1.0 / env.sim_config.sim_freq
 sim_dt_bw_step = sim_dt * (env.sim_config.sim_freq / env.sim_config.control_freq)
 
-human_render_cam_params = env.scene.human_render_cameras['render_camera'].get_params()
-human_render_cam_intrisic = human_render_cam_params['intrinsic_cv'][0]
-human_render_cam_cam2world_gl = human_render_cam_params['cam2world_gl'][0][:3, :4]
-human_render_cam_extrinsic_cv = human_render_cam_params['extrinsic_cv'][0]
-#%%
-base_camera_cam2world_gl = env.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
-base_camera_extrinsic_cv = env.scene.sensors['base_camera'].get_params()['extrinsic_cv'][0]
+# human_render_cam_params = env.scene.human_render_cameras['render_camera'].get_params()
+# human_render_cam_intrisic = human_render_cam_params['intrinsic_cv'][0]
+# human_render_cam_cam2world_gl = human_render_cam_params['cam2world_gl'][0][:3, :4]
+# human_render_cam_extrinsic_cv = human_render_cam_params['extrinsic_cv'][0]
+# #%%
+# base_camera_cam2world_gl = env.scene.sensors['base_camera'].get_params()['cam2world_gl'][0]
+
+# base_camera_extrinsic_cv = env.scene.sensors['base_camera'].get_params()['extrinsic_cv'][0]
 #%% 
 obs, info = env.reset(seed=seed)
 #%%
