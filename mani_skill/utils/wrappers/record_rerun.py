@@ -30,6 +30,7 @@ from mani_skill.utils.visualization.misc import (
     tile_images,
 )
 from mani_skill.utils.wrappers import CPUGymWrapper
+from mani_skill.utils.common import apply_transform_to_poses, unroll_delta_actions
 import uuid
 
 from dataclasses import is_dataclass, asdict
@@ -79,6 +80,143 @@ def temp_deep_print_shapes(x, prefix=""):
             temp_deep_print_shapes(x[k], prefix=prefix + "/" + k)
     else:
         print(prefix, x.shape)
+
+def linestrips3d_from_boxes(
+        centers: np.ndarray,
+        half_sizes: np.ndarray,
+        quaternions: np.ndarray,
+        radii: np.ndarray,
+        colors: np.ndarray,
+        labels: list=None,
+):
+    if labels is None:
+        labels = [None]*len(centers)
+
+    linestrip_points_list = []
+    linestrip_radii_list = []
+    linestrip_colors_list = []
+    linestrip_labels_list = []
+    for center, half_size, quaternion, color, radius, label in zip(centers, half_sizes, quaternions, colors, radii, labels):
+        linestrip_points, linestrip_radii, linestrip_colors, linestrip_labels = linestrip3d_from_box(
+            center, half_size, quaternion, radius, color, label
+        )
+        linestrip_points_list.extend(linestrip_points)
+        linestrip_radii_list.extend(linestrip_radii)
+        linestrip_colors_list.extend(linestrip_colors)
+        if linestrip_labels is not None:
+            linestrip_labels_list.extend(linestrip_labels)
+
+
+    # linestrip_points = np.concatenate(linestrip_points_list, axis=0)
+    # linestrip_colors = np.concatenate(linestrip_colors_list, axis=0)
+
+    if len(linestrip_labels_list) == 0:
+        linestrip_labels_list = None
+
+    linestrips3d = rr.LineStrips3D(
+        linestrip_points_list,
+        radii=linestrip_radii_list,
+        colors=linestrip_colors_list,
+        labels=linestrip_labels_list
+    )
+    return linestrips3d
+
+def linestrip3d_from_box(
+        center: np.ndarray,
+        half_sizes: np.ndarray,
+        quaternion: np.ndarray,
+        radius: float,
+        color: np.ndarray,
+        label: str=None,
+    ):
+    '''
+    center: 3x1 np.ndarray
+    half_sizes: 3x1 np.ndarray
+    quaternion: 4x1 np.ndarray (x, y, z, w)
+    radius: float
+    color: 3x1 np.ndarray
+    label: str
+    '''
+    # 8 corners of the box
+    corners = np.array([
+        [1, 1, 1],
+        [-1, 1, 1],
+        [-1, -1, 1],
+        [1, -1, 1],
+        [1, 1, -1],
+        [-1, 1, -1],
+        [-1, -1, -1],
+        [1, -1, -1],
+    ])
+    corners = corners*half_sizes
+    # apply transformation  
+    corners = (R.from_quat(quaternion).as_matrix() @ corners.T).T + center
+
+    points = []
+    points.append(
+        [
+            corners[0],
+            corners[1],
+            corners[2],
+            corners[3],
+            corners[0],
+        ]
+    )
+    
+    points.append(
+        [
+            corners[4],
+            corners[5],
+            corners[6],
+            corners[7],
+            corners[4],
+        ]
+    )
+    points.append(
+        [
+            corners[0],
+            corners[1],
+        ]
+    )
+    points.append(
+        [
+            corners[0],
+            corners[4],
+        ]
+    )
+    points.append(
+        [
+            corners[1],
+            corners[5],
+        ]
+    )
+    points.append(
+        [
+            corners[2],
+            corners[6],
+        ]
+    )
+    points.append(
+        [
+            corners[3],
+            corners[7],
+        ]
+    )
+
+    radii = np.ones(len(points))*radius
+    colors = np.ones((len(points), 3))*color
+    if label is not None:
+        labels = [label]*len(points)
+    else:
+        labels = None
+
+    '''
+    points: list of 6 Nx3 lists
+    radii: 6x1 np.ndarray
+    colors: 6x3 np.ndarray
+    labels: list of 6 str
+    '''
+    return points, radii, colors, labels
 
 
 class RecordEpisodeRerun(gym.Wrapper):
@@ -188,13 +326,19 @@ class RecordEpisodeRerun(gym.Wrapper):
         self,
         env: BaseEnv,
         output_dir: str,
+        policy_name: str,
+        only_log_tfs: bool = False, # whether to log the abstract geometries everytime or only the tfs. False allows trailing visual history of the gripper
+        log_action_plan_lumped: bool = True,
     ) -> None:
         super().__init__(env)
+        self.policy_name = policy_name
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._elapsed_record_steps = 0
         self._episode_id = -1
         self.current_path_to_rrd = None
+        self.only_log_tfs = only_log_tfs
+        self.log_action_plan_lumped = log_action_plan_lumped
 
         # check if wrapped env is already wrapped by a CPU gym wrapper
         cur_env = self.env
@@ -346,67 +490,67 @@ class RecordEpisodeRerun(gym.Wrapper):
         # # black/white: neutral,
         # # self.action_history_cmap = cmr.sepia # or possibly amber
         # '''
-        # self.action_history_cmap = cmr.bubblegum # or possibly amber
-        # self.action_history_cmap_clamp = (0.4, 0.8)
+        self.action_history_cmap = cmr.bubblegum # or possibly amber
+        self.action_history_cmap_clamp = (0.4, 0.8)
 
-        # # self.action_plan_cmap = plt.cm.cividis
-        # self.action_plan_cmap = cmr.swamp
-        # self.action_plan_cmap_clamp = (0.2, 0.8)
+        # self.action_plan_cmap = plt.cm.cividis
+        self.action_plan_cmap_str = 'cmr.swamp'
+        self.action_plan_cmap_clamp = (0.2, 0.8)
 
-        # if self.only_log_tfs:
-        #     current_gripper = self.get_abstract_gripper(
-        #             color=[1.0, 0.0, 0.0],
-        #             fill_mode="majorwireframe",
-        #             label=None,
-        #             radius=0.0015,
-        #         )
-        #     rr.log("world/robot/end_effector/current_pose", 
-        #         current_gripper,
-        #         static=True,
-        #     )
+        if self.only_log_tfs:
+            current_gripper = self.get_abstract_gripper(
+                    color=np.array([[1.0, 0.0, 0.0]]),
+                    fill_mode="majorwireframe",
+                    label=None,
+                    radius=0.0015,
+                )
+            rr.log("world/robot/end_effector/current_pose", 
+                current_gripper,
+                static=True,
+            )
 
-        #     rr.log("world/policy/obs/robot/end_effector/current_pose",
-        #            current_gripper,
-        #         static=True,)
+            # rr.log("world/policy/obs/robot/end_effector/current_pose",
+            #        current_gripper,
+            #     static=True,)
 
-        #     target_gripper = self.get_abstract_gripper(
-        #             color=[0.0, 1.0, 0.0],
-        #             fill_mode="majorwireframe",
-        #             label=None,
-        #             radius=0.0015,
-        #         )
-        #     rr.log("world/robot/end_effector/target_pose",
-        #         target_gripper,
-        #         static=True,
-        #     )
+            target_gripper = self.get_abstract_gripper(
+                    color=np.array([[0.0, 1.0, 0.0]]),
+                    fill_mode="majorwireframe",
+                    label=None,
+                    radius=0.0015,
+                )
+            rr.log("world/robot/end_effector/target_pose",
+                target_gripper,
+                static=True,
+            )
 
-        #     for i in range(self.action_history_len):
-        #         index = (float(i/(self.action_history_len-1))*(self.action_history_cmap_clamp[1]-self.action_history_cmap_clamp[0]))+self.action_history_cmap_clamp[0]
-        #         color = list(self.action_history_cmap(index)[:3]) # ignore alpha
-        #         action_history_gripper = self.get_abstract_gripper(
-        #             color=color,
-        #             fill_mode="majorwireframe",
-        #             label=None,
-        #             radius=0.0005,
-        #         )
-        #         rr.log(f"world/policy/obs/robot/action_history/{i}", 
-        #             action_history_gripper,
-        #             static=True,
-        #         )
+            # for i in range(self.action_history_len):
+            #     index = (float(i/(self.action_history_len-1))*(self.action_history_cmap_clamp[1]-self.action_history_cmap_clamp[0]))+self.action_history_cmap_clamp[0]
+            #     color = list(self.action_history_cmap(index)[:3]) # ignore alpha
+            #     action_history_gripper = self.get_abstract_gripper(
+            #         color=color,
+            #         fill_mode="majorwireframe",
+            #         label=None,
+            #         radius=0.0005,
+            #     )
+            #     rr.log(f"world/policy/obs/robot/action_history/{i}", 
+            #         action_history_gripper,
+            #         static=True,
+            #     )
 
-        #     for i in range(self.action_plan_len):
-        #         index = (float(i/(self.action_plan_len-1))*(self.action_plan_cmap_clamp[1]-self.action_plan_cmap_clamp[0]))+self.action_plan_cmap_clamp[0]
-        #         color = list(self.action_plan_cmap(index)[:3]) # ignore alpha
-        #         action_plan_gripper = self.get_abstract_gripper(
-        #             color=color, 
-        #             fill_mode="majorwireframe",
-        #             label=None,
-        #             radius=0.0005,
-        #         )
-        #         rr.log(f"world/policy/action_plan/{i}", 
-        #             action_plan_gripper,
-        #             static=True,
-        #         )
+            # for i in range(self.action_plan_len):
+            #     index = (float(i/(self.action_plan_len-1))*(self.action_plan_cmap_clamp[1]-self.action_plan_cmap_clamp[0]))+self.action_plan_cmap_clamp[0]
+            #     color = list(self.action_plan_cmap(index)[:3]) # ignore alpha
+            #     action_plan_gripper = self.get_abstract_gripper(
+            #         color=color, 
+            #         fill_mode="majorwireframe",
+            #         label=None,
+            #         radius=0.0005,
+            #     )
+            #     rr.log(f"world/policy/action_plan/{i}", 
+            #         action_plan_gripper,
+            #         static=True,
+            #     )
 
         # self.prev_end_effector_position = None
 
@@ -521,6 +665,280 @@ class RecordEpisodeRerun(gym.Wrapper):
             world_tf_cam=self.world_tf_cam,
             base_rerun_name="world",
         )
+        self.log_pose(
+            obs['extra']['end_effector_pose'][0].cpu().numpy(),
+            episode_timestamp=self._elapsed_record_steps * self.sim_dt_bw_step,
+            episode_step=self._elapsed_record_steps,
+            rerun_name="world/robot/end_effector/current_pose",
+            color=np.array([1.0, 0.0, 0.0]), 
+            radius=0.0015,
+        )
+        self.log_pose(
+            obs['agent']['controller']['arm']['target_pose'][0].cpu().numpy(),
+            episode_timestamp=self._elapsed_record_steps * self.sim_dt_bw_step,
+            episode_step=self._elapsed_record_steps,
+            rerun_name="world/robot/end_effector/target_pose",
+            color=np.array([0.0, 1.0, 0.0]), 
+            radius=0.0015,
+        )
+
+    def get_abstract_gripper(
+            self,
+            color:np.ndarray = np.array([[0.5, 0.5, 0.5]]),
+            fill_mode:str="fill",
+            label:str=None,
+            radius:float=0.0015,
+            world_tf_gripper:np.ndarray=None, # posquat with scalar first 
+        ) -> Boxes3D:
+        gripper_dims = np.array([
+            [0.032, 0.1, .033], # x, y, z (width, depth, height) main body
+            [.018/2, .027/2, .054/2], # x, y, z (width, depth, height) finger
+            [.018/2, .027/2, .054/2], # x, y, z (width, depth, height) finger
+        ])
+
+        z_bottom_of_finger_to_center = 0.009
+        z_top_of_finger_to_bottom_of_body = 0.007
+
+        gripper_centers = np.array([
+            [0, 0, -(gripper_dims[0, 2] + (gripper_dims[1,2]*2 - z_bottom_of_finger_to_center) - z_top_of_finger_to_bottom_of_body)], # main body
+            [0, gripper_dims[1,1], -(gripper_dims[1,2]-z_bottom_of_finger_to_center)], # finger 1
+            [0, -gripper_dims[1,1], -(gripper_dims[1,2]-z_bottom_of_finger_to_center)], # finger 2
+        ])
+        
+        gripper_orientations = R.from_quat([
+            [0, 0, 0, 1],
+            [0, 0, 0, 1],
+            [0, 0, 0, 1],
+        ])
+
+        colors = np.tile(color, (3, 1))
+        num_grippers = 1
+
+        if world_tf_gripper is not None:
+            num_grippers = world_tf_gripper.shape[0]
+            assert world_tf_gripper.ndim == 2, f"world_tf_gripper should be of shape (B,7), got {world_tf_gripper.shape}"
+            assert world_tf_gripper.shape[1] == 7, f"world_tf_gripper should be None or of shape (7,), got {world_tf_gripper.shape}"
+            # should have (3*B)x3 gripper centers and (3*B)x4 gripper orientations
+            if num_grippers > 1:
+                # need to tile one of them and repeat the other
+                # with tiling A,B becomes A,B,A,B while with repeat A,B becomes A,A,B,B
+                # then repeat the gripper centers and orientations by B times
+
+                gripper_centers = np.repeat(gripper_centers, num_grippers, axis=0)
+                gripper_orientations = R.concatenate(np.repeat(gripper_orientations, num_grippers, axis=0))
+                gripper_dims = np.repeat(gripper_dims, num_grippers, axis=0)
+
+                world_tf_gripper = np.tile(world_tf_gripper, (3,1))
+
+                assert gripper_centers.shape[0] == 3*num_grippers, f"gripper_centers should be of shape (3*B,3), got {gripper_centers.shape}"
+                assert len(gripper_orientations) == 3*num_grippers, f"gripper_orientations should be of shape (3*B,4), got {gripper_orientations.shape}"
+                assert gripper_dims.shape[0] == 3*num_grippers, f"gripper_dims should be of shape (3*B,3), got {gripper_dims.shape}"
+            
+            assert colors.shape[0] == gripper_centers.shape[0], f"colors should be of shape (3*B,3), got {colors.shape}"
+
+            # transform box centers and orientations to world frame
+            world_rot_gripper = R.from_quat(world_tf_gripper[:, 3:7], scalar_first=True)
+            gripper_centers = world_rot_gripper.apply(gripper_centers) + world_tf_gripper[:, :3]
+
+            # gripper_centers = (world_tf_gripper[:3, :3] @ gripper_centers.T).T + world_tf_gripper[:3, 3]
+
+            # gripper_orientations = R.from_matrix(world_tf_gripper[:3, :3] @ gripper_orientations.as_matrix())
+            gripper_orientations = world_rot_gripper*gripper_orientations
+
+        if fill_mode == "majorwireframe" and not self.only_log_tfs:
+            # use the linestrips to draw the gripper
+            gripper = linestrips3d_from_boxes(
+                centers=gripper_centers,
+                half_sizes=gripper_dims,
+                quaternions=gripper_orientations.as_quat(),
+                colors=colors,
+                radii=[radius]*3*num_grippers,
+                # labels=[label]*3,
+            )
+        else:
+            gripper = rr.Boxes3D(
+            centers=gripper_centers,
+            half_sizes=gripper_dims,
+            quaternions=gripper_orientations.as_quat(),
+            radii=[radius]*3*num_grippers,
+            colors=colors,
+            fill_mode=fill_mode,
+            # labels=[label]*3,
+        )
+        return gripper
+    
+    def log_pose(
+                self,
+                pose: np.ndarray, #7
+                episode_timestamp: float,
+                episode_step: int,
+                rerun_name: str,
+                color:np.ndarray = np.array([1.0, 0.0, 0.0]),
+                radius: float=0.0015,
+                ) -> None:
+        rr.set_time("episode_timestamp", timestamp=episode_timestamp)
+        rr.set_time("episode_step", sequence=episode_step)
+
+        if self.only_log_tfs:
+            
+            rr.log(rerun_name, 
+                rr.Transform3D(
+                translation=pose[:3],
+                # mat3x3=pose[:3, :3],
+                quaternion=pose[[4,5,6,3]], # needed to convert from [w,x,y,z] to [x,y,z,w]
+                )
+            )
+        else:
+            abstract_gripper = self.get_abstract_gripper(
+                color=color[np.newaxis, :], # add batch dimension
+                fill_mode="majorwireframe",
+                label=None,
+                radius=radius,
+                world_tf_gripper=pose[np.newaxis, :], # add batch dimension
+            )
+
+            rr.log(rerun_name,
+                abstract_gripper,
+            )
+    # def record_action_plan(self, action_plan: np.ndarray, obs: dict, action_frame_expression: str, input_rotation_representation: str) -> None:
+    def record_action_plan(self, action_plan: np.ndarray, input_rotation_representation: str) -> None:
+        '''
+        action_plan: T x 3+R+1 where first 3 are translation and last R are rotation and then 1 is gripper action
+        should already be in world frame
+        '''
+        # assert action_frame_expression in ["relative", "delta"], f"action_frame_expression should be either relative or delta, got {action_frame_expression}"
+        assert input_rotation_representation in ["axis_angle", "euler_angles", "quaternion"], f"input_rotation_representation should be axis_angle or euler_angles, got {input_rotation_representation}"
+
+        action_plan_reparam = np.zeros((action_plan.shape[0], 7), dtype=np.float32)
+        action_plan_reparam[:, :3] = action_plan[:, :3] # first 3 are translation
+        if input_rotation_representation == "euler_angles":
+            # convert euler angles to axis angle
+            action_plan_reparam[:, 3:7] = R.from_euler('XYZ', action_plan[:, 3:6], degrees=False).as_quat(scalar_first=True)
+        elif input_rotation_representation == "axis_angle":
+            # convert axis angle to quaternion
+            action_plan_reparam[:, 3:7] = R.from_rotvec(action_plan[:, 3:6]).as_quat(scalar_first=True)
+        elif input_rotation_representation == "quaternion":
+            # assume action_plan is already in quaternion format
+            action_plan_reparam[:, 3:7] = action_plan[:, 3:7]
+
+        # end_effector_pose = obs['extra']['end_effector_pose'][0].cpu().numpy() # bx7->7
+        # if action_frame_expression == "relative":
+        #     if input_rotation_representation == "axis_angle":
+        #         pass
+        #     elif input_rotation_representation == "quaternion":
+        #         # action_plan = np.zeros((self.action_plan_len, 6), dtype=np.float32)
+        #         raise NotImplementedError("quaternion to axis_angle conversion not implemented")
+        # elif action_frame_expression == "delta":
+        #     current_target_pose = obs['agent']['controller']['arm']['target_pose'].cpu().numpy() # bx7->7
+        #     target_pose_in_end_effector_frame = apply_transform_to_poses(end_effector_pose[np.newaxis, ...], current_target_pose, rotation_representation='quaternion')
+        #     action_plan = unroll_delta_actions(
+        #         delta_actions=torch.from_numpy(action_plan)[:, :6].unsqueeze(0), # accepts BxTx6
+        #         init_pose=torch.from_numpy(target_pose_in_end_effector_frame), # accepts Bx7
+        #         input_delta_rotation_representation=input_rotation_representation,
+        #         output_rotation_representation='axis_angle',
+        #     )[0]
+        
+        self.log_action_plan(
+            action_plan=action_plan_reparam,
+            # end_effector_pose=end_effector_pose,
+            episode_timestamp=self._elapsed_record_steps * self.sim_dt_bw_step,
+            episode_step=self._elapsed_record_steps,
+            rerun_name=f"world/{self.policy_name}/action_plan",
+            log_action_plan_lumped=self.log_action_plan_lumped,
+        )
+
+    def log_action_plan(
+                        self,
+                        action_plan: np.ndarray, # Tx6
+                        # end_effector_pose: np.ndarray, # 7
+                        episode_timestamp: float,
+                        episode_step: int,
+                        rerun_name: str,
+                        log_action_plan_lumped: bool=True,
+                        ) -> None:
+        '''
+        Assumes action_plan is relative expression from the current_ end effector pose
+        action_plan: T x 6+1 where first 3 are translation and last 3 are rotation (expressed in rotvec) and last 1 is gripper action
+        '''
+        rr.set_time("episode_timestamp", timestamp=episode_timestamp)
+        rr.set_time("episode_step", sequence=episode_step)
+
+        action_plan_length = action_plan.shape[0]
+
+        # end_effector_orientation = R.from_quat(end_effector_pose[3:7], scalar_first=True)
+        # action_plan = np.array(action_plan_msg.action_history).reshape(action_history_length, action_history_dim, order='C')    
+        action_plan_orientations = R.from_quat(action_plan[:, 3:7], scalar_first=True)
+
+        # action_plan_positions = action_plan[:, :3] + end_effector_pose[:3]
+        action_plan_positions = action_plan[:, :3]
+        # action_plan_orientations = action_plan_rotations*end_effector_orientation
+        colors = np.array(cmr.take_cmap_colors(self.action_plan_cmap_str, action_plan_length, cmap_range=self.action_plan_cmap_clamp), dtype=np.float32)
+        if not log_action_plan_lumped:
+            for i, (position, orientation) in enumerate(zip(action_plan_positions, action_plan_orientations)):
+                if self.only_log_tfs:
+                    rr.log(rerun_name + f"/{i}", rr.Transform3D(
+                        translation=position,
+                        mat3x3=orientation.as_matrix(),
+                    ),
+                    )
+                else:
+                    # color = self.action_plan_cmap_str(index)[:3] # ignore alpha
+                    color = colors[i, :3] # ignore alpha
+                    # world_tf_gripper = np.eye(4)
+                    world_tf_gripper = np.zeros(7, dtype=np.float32)
+                    world_tf_gripper[:3] = position
+                    world_tf_gripper[3:7] = orientation.as_quat(scalar_first=True)
+                    gripper = self.get_abstract_gripper(
+                        color=color[np.newaxis, :], # add batch dimension
+                        fill_mode="majorwireframe",
+                        label=None,
+                        radius=0.0005,
+                        world_tf_gripper=world_tf_gripper
+                    )
+                    rr.log(f"{rerun_name}/{i}",
+                        gripper,
+                    )
+        else:
+            assert not self.only_log_tfs, "lumped action plan not supported with only_log_tfs"
+            # color = self.action_plan_cmap(index)[:3] # ignore alpha
+
+            action_plan = np.zeros((action_plan_length, 7), dtype=np.float32)
+            action_plan[:, :3] = action_plan_positions
+            action_plan[:, 3:7] = action_plan_orientations.as_quat(scalar_first=True)
+            gripper = self.get_abstract_gripper(
+                        color=colors, # add batch dimension
+                        fill_mode="majorwireframe",
+                        label=None,
+                        radius=0.0005,
+                        world_tf_gripper=action_plan
+                    )
+            rr.log(rerun_name,
+                gripper,
+            )
+
+        # if len(action_plan.gripper_action_trajectory) > 0:
+        #     action_plan_gripper = np.array(action_plan.gripper_action_trajectory)
+        
+        #TODO log the arrows static but just update transforms
+        # # Lx3x3 @ 3xN = LxNx3
+        # basis_vectors = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)*vector_length
+        # action_plan_vectors = (action_plan_orientations.as_matrix() @ basis_vectors.T).transpose(0, 2, 1)
+        # # base_vector_rgba = np.array([[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1]], dtype=np.float32)
+        # # use amber turqoise violet
+        # base_vector_rgba = np.array([[1, 191/255, 0, 1], [64/255, 224/255, 208/255, 1], [138/255, 43/255, 226/255, 1]], dtype=np.float32)
+
+        # for i, (origin, vectors) in enumerate(zip(action_history_positions, action_plan_vectors)):
+        #     current_vector_rgba = base_vector_rgba.copy()
+        #     current_vector_rgba[:, 3] = (action_history_length - i)/action_history_length
+        #     rr.log(rerun_name + f"/{i}", 
+        #         rr.Arrows3D(
+        #         origins=np.zeros((len(vectors), 3)),
+        #         vectors=basis_vectors,
+        #         colors=current_vector_rgba,
+        #         labels=[action_plan_msg.header.seq]*3,
+        #         ),
+        #     static=True,
+        #     )
 
     def reset(
         self,
@@ -553,6 +971,7 @@ class RecordEpisodeRerun(gym.Wrapper):
         self._elapsed_record_steps += 1
 
         self.log_obs(obs)
+
         franka_state = self.env.agent.robot.get_state()[0].cpu().numpy()
         joint_dict = self.fill_joint_dict(franka_state[13:20])
         self.franka_urdf_logger.update_joints(joint_dict)

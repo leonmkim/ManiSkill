@@ -29,7 +29,8 @@ import logging
 record_logger = logging.getLogger("record_logger")
 
 #%%
-spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
+# spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
+spacemouse_input = SpacemouseInput(sixd_mask=[0,0,0,1,1,0])
 desired_viewing_size = (256, 256)
 output_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop")
 record_demonstrations = True
@@ -115,7 +116,7 @@ if record_demonstrations:
         source_type="teleoperation",
         source_desc="teleoperation via spacemouse",
     )
-seed = 700
+seed = 0
 num_trajs = 0
 #%%
 sim_dt = 1.0 / env.sim_config.sim_freq

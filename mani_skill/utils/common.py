@@ -392,7 +392,7 @@ def to_numpy(array: Union[Array, Sequence], dtype=None) -> np.ndarray:
 # Leon: Utilities for changing parameterizations of actions
 # -------------------------------------------------------------------------- #
 
-def get_plan_target_poses_in_current_pose(current_pose, all_target_poses_in_world, rotation_representation='axis_angle'):
+def apply_transform_to_poses(current_pose, all_target_poses_in_world, rotation_representation='axis_angle', output_rotation_representation='axis_angle', mode:str = 'subtract'):
     '''
     Args:
         current_pose: (1, 7)
@@ -401,9 +401,9 @@ def get_plan_target_poses_in_current_pose(current_pose, all_target_poses_in_worl
         all_target_poses_in_current_pose: (N, 3+R) where R is 3 for axis angle or 4 for quaternion or 6 for 6D representation 
     '''
     assert rotation_representation in ['axis_angle', 'quaternion', '6d'], f"rotation_representation {rotation_representation} not supported"
-    assert len(current_pose.shape) == 2, f"current_pose shape {current_pose.shape} not supported"
-    assert len(all_target_poses_in_world.shape) == 2, f"all_target_poses_in_world shape {all_target_poses_in_world.shape} not supported"
-    assert len(current_pose.shape) == 2, f"current_pose shape {current_pose.shape} not supported"
+    assert current_pose.ndim == 2, f"current_pose shape {current_pose.shape} not supported"
+    assert all_target_poses_in_world.ndim == 2, f"all_target_poses_in_world shape {all_target_poses_in_world.shape} not supported"
+    assert mode in ['subtract', 'add'], f"mode {mode} not supported, must be either 'subtract' or 'add'" 
     convert_back_to_numpy = False
     if isinstance(current_pose, np.ndarray):
         current_pose = torch.from_numpy(current_pose)
@@ -411,7 +411,7 @@ def get_plan_target_poses_in_current_pose(current_pose, all_target_poses_in_worl
     if isinstance(all_target_poses_in_world, np.ndarray):
         all_target_poses_in_world = torch.from_numpy(all_target_poses_in_world)
         convert_back_to_numpy = True
-        
+
     if rotation_representation == 'axis_angle':
         rotation_dimension = 3
     elif rotation_representation == 'quaternion':
@@ -419,9 +419,15 @@ def get_plan_target_poses_in_current_pose(current_pose, all_target_poses_in_worl
     elif rotation_representation == '6d':
         rotation_dimension = 6
 
+    if mode == 'subtract':
+        current_pose[:, 0:3] = -current_pose[:, 0:3]  # Invert the translation part
+        current_pose[:, 3:7] = transforms.quaternion_invert(current_pose[:, 3:7])  # Invert the rotation part
+
     plan_target_poses_in_current_pose = torch.zeros((all_target_poses_in_world.shape[0], 3+rotation_dimension), dtype=torch.float32, device=current_pose.device)
-    plan_target_poses_in_current_pose[:, 0:3] = all_target_poses_in_world[:, 0:3] - current_pose[:, 0:3]
-    target_rotation_from_current_pose = transforms.quaternion_multiply(all_target_poses_in_world[:, 3:7], transforms.quaternion_invert(current_pose[:, 3:7]))
+    # plan_target_poses_in_current_pose[:, 0:3] = all_target_poses_in_world[:, 0:3] - current_pose[:, 0:3]
+    plan_target_poses_in_current_pose[:, 0:3] = all_target_poses_in_world[:, 0:3] + current_pose[:, 0:3]
+    # target_rotation_from_current_pose = transforms.quaternion_multiply(all_target_poses_in_world[:, 3:7], transforms.quaternion_invert(current_pose[:, 3:7]))
+    target_rotation_from_current_pose = transforms.quaternion_multiply(all_target_poses_in_world[:, 3:7], current_pose[:, 3:7])
     if rotation_representation == 'axis_angle':
         plan_target_poses_in_current_pose[:, 3:] = transforms.quaternion_to_axis_angle(target_rotation_from_current_pose)
     elif rotation_representation == 'quaternion':
@@ -433,52 +439,9 @@ def get_plan_target_poses_in_current_pose(current_pose, all_target_poses_in_worl
         plan_target_poses_in_current_pose = plan_target_poses_in_current_pose.cpu().numpy()
     return plan_target_poses_in_current_pose
 
-def unroll_delta_actions(delta_actions, init_pose, input_delta_rotation_representation='axis_angle', output_rotation_representation='axis_angle'):
-    '''
-    init_pose: (B, 7)
-    delta_actions: (B, N, 6)
-    input_rotation_representation: 'axis_angle' or 'quaternion'
-    output_rotation_representation: 'axis_angle' or 'quaternion'
-    Returns:
-        gt_target_poses_in_current_pose: (B, N, 3+R) where R is 3 for axis angle or 4 for quaternion
-    '''
-    assert input_delta_rotation_representation in ['axis_angle', 'quaternion'], f"input_delta_rotation_representation {input_delta_rotation_representation} not supported"
-    assert output_rotation_representation in ['axis_angle', 'quaternion'], f"output_rotation_representation {output_rotation_representation} not supported"
-    assert len(init_pose.shape) == 2, f"init_pose shape {init_pose.shape} not supported"
-    assert len(delta_actions.shape) == 3, f"delta_actions shape {delta_actions.shape} not supported"
-    assert init_pose.shape[0] == delta_actions.shape[0], f"init_pose shape {init_pose.shape} and delta_actions shape {delta_actions.shape} not match"
-    assert init_pose.shape[1] == 7, f"init_pose shape {init_pose.shape} not supported"
-
-    N = delta_actions.shape[1]
-
-    if output_rotation_representation == 'axis_angle':
-        rotation_dim = 3
-    elif output_rotation_representation == 'quaternion':
-        rotation_dim = 4
-
-    gt_target_poses_in_current_pose = torch.zeros(delta_actions.shape[:2] + (3+rotation_dim,), dtype=torch.float32, device=delta_actions.device)
-    gt_target_poses_in_current_pose[:,:,:3] = init_pose[:, :3].unsqueeze(1) + torch.cumsum(delta_actions[:, :, :3], dim=1)
-    if input_delta_rotation_representation == 'axis_angle':
-        assert delta_actions.shape[2] == 6, f"delta_actions shape {delta_actions.shape} not match with input_delta_rotation_representation {input_delta_rotation_representation}"
-        gt_delta_quaternions = transforms.axis_angle_to_quaternion(delta_actions[:, :, 3:6])
-    elif input_delta_rotation_representation == 'quaternion':
-        assert delta_actions.shape[2] == 7, f"delta_actions shape {delta_actions.shape} not match with input_delta_rotation_representation {input_delta_rotation_representation}"
-        gt_delta_quaternions = delta_actions[:, :, 3:7]
-    
-    gt_target_rotations_in_current_pose = torch.zeros(delta_actions.shape[:2] + (4,), dtype=torch.float32, device=delta_actions.device)
-    for i in range(N):
-        if i == 0:
-            gt_target_rotations_in_current_pose[:, i] = transforms.quaternion_multiply(gt_delta_quaternions[:, i], init_pose[:, 3:7])
-        else:
-            gt_target_rotations_in_current_pose[:, i] = transforms.quaternion_multiply(gt_delta_quaternions[:, i], gt_target_rotations_in_current_pose[:, i-1])
-
-    if output_rotation_representation == 'axis_angle':
-        gt_target_poses_in_current_pose[:, :, 3:6] = transforms.quaternion_to_axis_angle(gt_target_rotations_in_current_pose)
-    elif output_rotation_representation == 'quaternion':
-        gt_target_poses_in_current_pose[:, :, 3:7] = gt_target_rotations_in_current_pose
-    return gt_target_poses_in_current_pose
 
 from scipy.spatial.transform import Rotation as R
+
 def get_plan_target_poses_in_current_pose_scipy(current_pose, all_target_poses_in_world, rotation_representation='axis_angle'):
     '''
     Args:
@@ -506,3 +469,237 @@ def get_plan_target_poses_in_current_pose_scipy(current_pose, all_target_poses_i
     elif rotation_representation == 'quaternion':
         plan_target_poses_in_current_pose[:, 3:] = target_rotation_from_current_pose.as_quat(scalar_first=True)
     return plan_target_poses_in_current_pose
+
+def unroll_delta_actions(delta_actions, init_pose, input_delta_rotation_representation='axis_angle', output_rotation_representation='axis_angle', translation_frame_convention='root', rotation_frame_convention='root'):
+    '''
+    init_pose: (B, 7)
+    delta_actions: (B, N, 6)
+    input_rotation_representation: 'axis_angle' or 'quaternion'
+    output_rotation_representation: 'axis_angle' or 'quaternion' or 'euler_angles'
+    See https://maniskill.readthedocs.io/en/latest/user_guide/concepts/controllers.html#delta-control for frame convention details
+    translation_frame_convention: 'body' or 'root'
+    rotation_frame_convention: 'body' or 'root'
+    Returns:
+        gt_target_poses_in_current_pose: (B, N, 3+R) where R is 3 for axis angle or 4 for quaternion
+    '''
+    assert translation_frame_convention in ['body', 'root'], f"translation_frame_convention {translation_frame_convention} not supported"
+    assert rotation_frame_convention in ['body', 'root'], f"rotation_frame_convention {rotation_frame_convention} not supported"
+    assert input_delta_rotation_representation in ['axis_angle', 'quaternion'], f"input_delta_rotation_representation {input_delta_rotation_representation} not supported"
+    assert output_rotation_representation in ['axis_angle', 'quaternion', 'euler_angles'], f"output_rotation_representation {output_rotation_representation} not supported"
+    assert len(init_pose.shape) == 2, f"init_pose shape {init_pose.shape} not supported"
+    assert len(delta_actions.shape) == 3, f"delta_actions shape {delta_actions.shape} not supported"
+    assert init_pose.shape[0] == delta_actions.shape[0], f"init_pose shape {init_pose.shape} and delta_actions shape {delta_actions.shape} not match"
+    assert init_pose.shape[1] == 7, f"init_pose shape {init_pose.shape} not supported"
+
+    B, N = delta_actions.shape[:2]
+
+    if output_rotation_representation in ['axis_angle', 'euler_angles']:
+        rotation_dim = 3
+    elif output_rotation_representation == 'quaternion':
+        rotation_dim = 4
+
+    gt_target_poses_in_current_pose = torch.zeros(delta_actions.shape[:2] + (3+rotation_dim,), dtype=torch.float32, device=delta_actions.device)
+    if translation_frame_convention == 'root':
+        gt_target_poses_in_current_pose[:,:,:3] = init_pose[:, :3].unsqueeze(1) + torch.cumsum(delta_actions[:, :, :3], dim=1)
+
+    if input_delta_rotation_representation == 'axis_angle':
+        assert delta_actions.shape[2] == 6, f"delta_actions shape {delta_actions.shape} not match with input_delta_rotation_representation {input_delta_rotation_representation}"
+        gt_delta_quaternions = transforms.axis_angle_to_quaternion(delta_actions[:, :, 3:6])
+    elif input_delta_rotation_representation == 'quaternion':
+        assert delta_actions.shape[2] == 7, f"delta_actions shape {delta_actions.shape} not match with input_delta_rotation_representation {input_delta_rotation_representation}"
+        gt_delta_quaternions = delta_actions[:, :, 3:7]
+    
+    gt_target_rotations_in_current_pose = torch.zeros((B, N+1, 4), dtype=torch.float32, device=delta_actions.device)
+    gt_target_rotations_in_current_pose[:, 0] = init_pose[:, 3:7]  # initial rotation is the same as the initial pose
+    for i in range(N):
+        # if i == 0:
+        #     gt_target_rotations_in_current_pose[:, i] = transforms.quaternion_multiply(gt_delta_quaternions[:, i], init_pose[:, 3:7])
+        #     # gt_target_poses_in_current_pose[:, i, :3] = transforms.quaternion_apply(init_pose[:, 3:7], delta_actions[:, i, :3]) + init_pose[:, :3]
+        # else:
+        if rotation_frame_convention == 'root':
+            gt_target_rotations_in_current_pose[:, i+1] = transforms.quaternion_multiply(gt_delta_quaternions[:, i], gt_target_rotations_in_current_pose[:, i])
+        elif rotation_frame_convention == 'body':
+            gt_target_rotations_in_current_pose[:, i+1] = transforms.quaternion_multiply(gt_target_rotations_in_current_pose[:, i], gt_delta_quaternions[:, i])
+        if translation_frame_convention == 'body':
+            gt_target_poses_in_current_pose[:, i, :3] = transforms.quaternion_apply(gt_target_rotations_in_current_pose[:, i], delta_actions[:, i, :3]) + gt_target_poses_in_current_pose[:, i, :3]
+    gt_target_rotations_in_current_pose = gt_target_rotations_in_current_pose[:, 1:]  # remove the initial rotation
+
+    if output_rotation_representation == 'axis_angle':
+        gt_target_poses_in_current_pose[:, :, 3:6] = transforms.quaternion_to_axis_angle(gt_target_rotations_in_current_pose)
+    elif output_rotation_representation == 'quaternion':
+        gt_target_poses_in_current_pose[:, :, 3:7] = gt_target_rotations_in_current_pose
+    elif output_rotation_representation == 'euler_angles':
+        gt_target_orientations_in_current_pose = transforms.quaternion_to_matrix(gt_target_rotations_in_current_pose)
+        gt_target_poses_in_current_pose[:, :, 3:6] = transforms.matrix_to_euler_angles(gt_target_orientations_in_current_pose, convention='XYZ')
+    return gt_target_poses_in_current_pose
+
+def get_delta_actions_from_plan_target_poses(plan_target_poses, gripper_actions, input_rotation_representation='axis_angle', output_rotation_representation='axis_angle'):
+    '''
+    Args:
+        plan_target_poses: (N, 3+R) where R is 3 for axis angle or 4 for quaternion or 6 for 6D representation. Must be plan target poses expressed in a common frame
+        gripper_actions: (N-1, 1)
+    Returns:
+        delta_actions_from_plan_target_poses: (N-1, 4+R) where the last element is the gripper action
+    '''
+    assert input_rotation_representation in ['axis_angle', 'quaternion', '6d'], f"rotation_representation {input_rotation_representation} not supported"
+    if input_rotation_representation == 'axis_angle':
+        assert plan_target_poses.shape[1] == 6, f"plan_target_poses shape {plan_target_poses.shape} not supported for axis_angle representation"
+    elif input_rotation_representation == 'quaternion':
+        assert plan_target_poses.shape[1] == 7, f"plan_target_poses shape {plan_target_poses.shape} not supported for quaternion representation"
+    elif input_rotation_representation == '6d':
+        assert plan_target_poses.shape[1] == 9, f"plan_target_poses shape {plan_target_poses.shape} not supported for 6d representation"
+    
+    if output_rotation_representation == 'axis_angle':
+        output_rotation_dim = 3
+    elif output_rotation_representation == 'quaternion':
+        output_rotation_dim = 4
+    elif output_rotation_representation == '6d':
+        output_rotation_dim = 6
+    delta_actions_from_plan_target_poses = torch.zeros((plan_target_poses.shape[0]-1, 4+output_rotation_dim))
+    delta_actions_from_plan_target_poses[:, :3] = torch.diff(plan_target_poses[:, :3], dim=0)
+    if input_rotation_representation == 'axis_angle':
+        current_plan_target_quaternions = transforms.axis_angle_to_quaternion(plan_target_poses[:-1, 3:])
+        next_plan_target_quaternions = transforms.axis_angle_to_quaternion(plan_target_poses[1:, 3:])
+    elif input_rotation_representation == 'quaternion':
+        current_plan_target_quaternions = plan_target_poses[:-1, 3:7]
+        next_plan_target_quaternions = plan_target_poses[1:, 3:7]
+    elif input_rotation_representation == '6d':
+        current_plan_target_quaternions = transforms.matrix_to_quaternion(transforms.rotation_6d_to_matrix(plan_target_poses[:-1, 3:]))
+        next_plan_target_quaternions = transforms.matrix_to_quaternion(transforms.rotation_6d_to_matrix(plan_target_poses[1:, 3:]))
+    delta_action_rotation = transforms.quaternion_multiply(next_plan_target_quaternions, transforms.quaternion_invert(current_plan_target_quaternions))
+    if output_rotation_representation == 'axis_angle':
+        delta_actions_from_plan_target_poses[:, 3:6] = transforms.quaternion_to_axis_angle(delta_action_rotation)
+    elif output_rotation_representation == 'quaternion':
+        delta_actions_from_plan_target_poses[:, 3:7] = delta_action_rotation
+    elif output_rotation_representation == '6d':
+        delta_actions_from_plan_target_poses[:, 3:9] = transforms.matrix_to_rotation_6d(transforms.quaternion_to_matrix(delta_action_rotation))
+    delta_actions_from_plan_target_poses[:, 3+output_rotation_dim:3+output_rotation_dim+1] = gripper_actions # the last element is the gripper action
+    return delta_actions_from_plan_target_poses
+
+def change_rotation_representation(poses, gripper_actions=None, input_rotation_representation='axis_angle', output_rotation_representation='axis_angle'):
+    '''
+    Args:
+        poses: (N, 3+R) where R is 3 for axis angle or 4 for quaternion or 6 for 6D representation
+        gripper_actions: (N), if provided, will be appended to the end of the output poses
+        input_rotation_representation: 'axis_angle' or 'quaternion' or '6d'
+        output_rotation_representation: 'axis_angle' or 'quaternion' or '6d'
+    '''
+    assert input_rotation_representation in ['axis_angle', 'quaternion', '6d', 'euler_angles'], f"input_rotation_representation {input_rotation_representation} not supported"
+    assert output_rotation_representation in ['axis_angle', 'quaternion', '6d', 'euler_angles'], f"output_rotation_representation {output_rotation_representation} not supported"
+    assert poses.ndim == 2, f"poses shape {poses.shape} not supported"
+    if gripper_actions is not None:
+        assert gripper_actions.ndim == 1, f"gripper_actions shape {gripper_actions.shape} not supported"
+        assert gripper_actions.shape[0] == poses.shape[0], f"gripper_actions shape {gripper_actions.shape} and poses shape {poses.shape} not match"
+
+    if input_rotation_representation == 'axis_angle':
+        assert poses.shape[1] == 6, f"poses shape {poses.shape} not supported for axis_angle representation"
+    elif input_rotation_representation == 'quaternion':
+        assert poses.shape[1] == 7, f"poses shape {poses.shape} not supported for quaternion representation"
+    elif input_rotation_representation == '6d':
+        assert poses.shape[1] == 9, f"poses shape {poses.shape} not supported for 6d representation"
+    elif input_rotation_representation == 'euler_angles':
+        assert poses.shape[1] == 6, f"poses shape {poses.shape} not supported for euler_angles representation"
+
+    if output_rotation_representation == 'axis_angle':
+        output_rotation_dim = 3
+    elif output_rotation_representation == 'quaternion':
+        output_rotation_dim = 4
+    elif output_rotation_representation == '6d':
+        output_rotation_dim = 6
+    elif output_rotation_representation == 'euler_angles':
+        output_rotation_dim = 3
+
+    total_dim = 3 + output_rotation_dim + (1 if gripper_actions is not None else 0)
+    output_poses = torch.zeros((poses.shape[0], total_dim), dtype=torch.float32, device=poses.device)
+    output_poses[:, :3] = poses[:, :3]  # copy the translation part
+    if input_rotation_representation == 'axis_angle':
+        current_quaternions = transforms.axis_angle_to_quaternion(poses[:, 3:6])
+    elif input_rotation_representation == 'quaternion':
+        current_quaternions = poses[:, 3:7]
+    elif input_rotation_representation == '6d':
+        current_rot_matrices = transforms.rotation_6d_to_matrix(poses[:, 3:9])
+        current_quaternions = transforms.matrix_to_quaternion(current_rot_matrices)
+    elif input_rotation_representation == 'euler_angles':
+        current_rot_matrices = transforms.euler_angles_to_matrix(poses[:, 3:6], convention='XYZ')
+        current_quaternions = transforms.matrix_to_quaternion(current_rot_matrices)
+    assert current_quaternions.shape[1] == 4, f"current_quaternions shape {current_quaternions.shape} not supported"
+
+    if output_rotation_representation == 'axis_angle':
+        output_poses[:, 3:6] = transforms.quaternion_to_axis_angle(current_quaternions)
+    elif output_rotation_representation == 'quaternion':
+        output_poses[:, 3:7] = current_quaternions
+    elif output_rotation_representation == '6d':
+        output_poses[:, 3:9] = transforms.matrix_to_rotation_6d(transforms.quaternion_to_matrix(current_quaternions))
+    elif output_rotation_representation == 'euler_angles':
+        output_poses[:, 3:6] = transforms.matrix_to_euler_angles(transforms.quaternion_to_matrix(current_quaternions), convention='XYZ')
+    if gripper_actions is not None:
+        output_poses[:, -1] = gripper_actions
+    return output_poses
+
+def compute_delta_action(prev_target_pose, current_action, input_rotation_representation, output_rotation_representation='axis_angle'):
+    '''
+    Args:
+        prev_target_pose: Bx(3+R) where R is 3 for axis angle or 4 for quaternion or 6 for 6D representation
+        current_target_pose: Bx(3+R) where R is 3 for axis angle or 4 for quaternion or 6 for 6D representation
+        input_rotation_representation: 'axis_angle' or 'quaternion' or '6d'
+    Returns:
+        delta_action: Bx(4+R) where R is 3 for axis angle or 4 for quaternion or 6 for 6D representation
+    '''
+    assert input_rotation_representation in ['axis_angle', 'quaternion', '6d', 'euler_angles'], f"input_rotation_representation {input_rotation_representation} not supported"
+    assert output_rotation_representation in ['axis_angle', 'quaternion', '6d', 'euler_angles'], f"output_rotation_representation {output_rotation_representation} not supported"
+    assert prev_target_pose.ndim == 2, f"prev_target_pose shape {prev_target_pose.shape} not supported"
+    assert current_action.ndim == 2, f"current_action shape {current_action.shape} not supported"
+    assert prev_target_pose.shape[0] == current_action.shape[0], f"prev_target_pose shape {prev_target_pose.shape} and current_action shape {current_action.shape} not match"
+    
+    B = prev_target_pose.shape[0]
+    
+    if input_rotation_representation == 'axis_angle':
+        assert prev_target_pose.shape[1] == 6, f"prev_target_pose shape {prev_target_pose.shape} not supported for axis_angle representation"
+        assert current_action.shape[1] == 7, f"current_target_pose shape {current_action.shape} not supported for axis_angle representation"
+    elif input_rotation_representation == 'quaternion':
+        assert prev_target_pose.shape[1] == 7, f"prev_target_pose shape {prev_target_pose.shape} not supported for quaternion representation"
+        assert current_action.shape[1] == 8, f"current_target_pose shape {current_action.shape} not supported for quaternion representation"
+    elif input_rotation_representation == '6d':
+        assert prev_target_pose.shape[1] == 9, f"prev_target_pose shape {prev_target_pose.shape} not supported for 6d representation"
+        assert current_action.shape[1] == 10, f"current_target_pose shape {current_action.shape} not supported for 6d representation"
+    elif input_rotation_representation == 'euler_angles':
+        assert prev_target_pose.shape[1] == 6, f"prev_target_pose shape {prev_target_pose.shape} not supported for euler_angles representation"
+        assert current_action.shape[1] == 7, f"current_target_pose shape {current_action.shape} not supported for euler_angles representation"
+
+    if output_rotation_representation in ['axis_angle', 'euler_angles']:
+        rotation_dim = 3
+    elif output_rotation_representation == 'quaternion':
+        rotation_dim = 4
+    elif output_rotation_representation == '6d':
+        rotation_dim = 6
+
+    delta_action = torch.zeros((B, 3 + rotation_dim + 1,), dtype=torch.float32, device=current_action.device)
+    delta_action[:, :3] = current_action[:, :3] - prev_target_pose[:, :3]
+    delta_action[:, -1] = current_action[:, -1]  # gripper action
+    if input_rotation_representation == 'axis_angle':
+        current_quaternions = transforms.axis_angle_to_quaternion(current_action[:, 3:6])
+        prev_quaternions = transforms.axis_angle_to_quaternion(prev_target_pose[:, 3:6])
+    elif input_rotation_representation == 'quaternion':
+        current_quaternions = current_action[:, 3:7]
+        prev_quaternions = prev_target_pose[:, 3:7]
+    elif input_rotation_representation == '6d':
+        current_rot_matrices = transforms.rotation_6d_to_matrix(current_action[:, 3:9])
+        prev_rot_matrices = transforms.rotation_6d_to_matrix(prev_target_pose[:, 3:9])
+        current_quaternions = transforms.matrix_to_quaternion(current_rot_matrices)
+        prev_quaternions = transforms.matrix_to_quaternion(prev_rot_matrices)
+    elif input_rotation_representation == 'euler_angles':
+        current_rot_matrices = transforms.euler_angles_to_matrix(current_action[:, 3:6], convention='XYZ')
+        prev_rot_matrices = transforms.euler_angles_to_matrix(prev_target_pose[:, 3:6], convention='XYZ')
+        current_quaternions = transforms.matrix_to_quaternion(current_rot_matrices)
+        prev_quaternions = transforms.matrix_to_quaternion(prev_rot_matrices)
+
+    delta_rotation = transforms.quaternion_multiply(current_quaternions, transforms.quaternion_invert(prev_quaternions))
+    if output_rotation_representation == 'axis_angle':
+        delta_action[:, 3:6] = transforms.quaternion_to_axis_angle(delta_rotation)
+    elif output_rotation_representation == 'quaternion':
+        delta_action[:, 3:7] = delta_rotation
+    elif output_rotation_representation == '6d':
+        delta_action[:, 3:9] = transforms.matrix_to_rotation_6d(transforms.quaternion_to_matrix(delta_rotation))
+    elif output_rotation_representation == 'euler_angles':
+        delta_action[:, 3:6] = transforms.matrix_to_euler_angles(transforms.quaternion_to_matrix(delta_rotation), convention='XYZ')
+    return delta_action

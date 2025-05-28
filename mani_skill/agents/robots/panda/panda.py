@@ -136,6 +136,8 @@ class Panda(BaseAgent):
             use_delta=False,
             normalize_action=False,
         )
+        arm_pd_ee_target_pose = deepcopy(arm_pd_ee_pose)
+        arm_pd_ee_target_pose.use_target = True
 
         arm_pd_ee_target_delta_pos = deepcopy(arm_pd_ee_delta_pos)
         arm_pd_ee_target_delta_pos.use_target = True
@@ -201,6 +203,7 @@ class Panda(BaseAgent):
                 arm=arm_pd_ee_delta_pose, gripper=gripper_pd_joint_pos
             ),
             pd_ee_pose=dict(arm=arm_pd_ee_pose, gripper=gripper_pd_joint_pos),
+            pd_ee_target_pose=dict(arm=arm_pd_ee_target_pose, gripper=gripper_pd_joint_pos),
             # TODO(jigu): how to add boundaries for the following controllers
             pd_joint_target_delta_pos=dict(
                 arm=arm_pd_joint_target_delta_pos, gripper=gripper_pd_joint_pos

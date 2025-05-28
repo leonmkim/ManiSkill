@@ -491,7 +491,7 @@ class BookInsertionEnv(BaseEnv):
             **kwargs,
         )
 
-        print(f"BookInsertionEnv: {self.__dict__}")
+        # print(f"BookInsertionEnv: {self.__dict__}")
 
     @property
     def _default_sim_config(self):
@@ -560,8 +560,6 @@ class BookInsertionEnv(BaseEnv):
             self.table_scene = SimpleTableSceneBuilder(self)
             self.table_scene.build()
 
-            self.target_EE_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="target_EE_pose", body_type="kinematic")
-            self._hidden_objects.append(self.target_EE_pose)
 
             # >>>>>>>>> for debugging
             # self.top_of_slot_viz_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="top_of_slot_viz_pose", body_type="kinematic")
@@ -855,6 +853,10 @@ class BookInsertionEnv(BaseEnv):
                 self.add_to_state_dict_registry(self.left_book_end)
                 self.add_to_state_dict_registry(self.right_book_end)
                     
+
+            self.target_EE_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="target_EE_pose", body_type="kinematic")
+            self._hidden_objects.append(self.target_EE_pose)
+            
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         # book_insertion_env_logger.debug(f"times spawned new env books: {self.times_spawned_new_env_books}")
         with torch.device(self.device):
@@ -950,6 +952,7 @@ class BookInsertionEnv(BaseEnv):
                     right_book_end_pos[:, 1] += (self.book_end_sizes[1]/2 + self.book_ends_config.travel_limit + self.book_ends_config.wall_width/2)
                 self.right_book_end.set_pose(Pose.create_from_pq(right_book_end_pos, identity_quat))
 
+
             # target_EE_pose = self.agent.controller.get_state()['arm']['target_pose']
             self.target_EE_pose.set_pose(end_effector_pose)
 
@@ -965,7 +968,8 @@ class BookInsertionEnv(BaseEnv):
 
             self.elapsed_success_duration = torch.zeros(b)
             self.last_eval_bool = torch.zeros(b, dtype=torch.bool)
-
+            
+            
     # def _after_simulation_step(self):
     #     # update viz poses
     #     self.top_of_slot_viz_pose.set_pose(self.top_of_slot_pose)
@@ -980,10 +984,13 @@ class BookInsertionEnv(BaseEnv):
 
     def _after_control_step(self):
         # update target EE pose
-        target_EE_pose_in_root = Pose(self.agent.controller.get_state()['arm']['target_pose'])
-        root_pose = self.agent.robot.get_pose()
-        target_EE_pose = root_pose * target_EE_pose_in_root
-        self.target_EE_pose.set_pose(target_EE_pose)
+        controller_state = self.agent.controller.get_state()
+        if 'arm' in controller_state:
+            target_EE_pose_in_root = Pose(controller_state['arm']['target_pose'])
+            root_pose = self.agent.robot.get_pose()
+            target_EE_pose = root_pose * target_EE_pose_in_root
+            self.target_EE_pose.set_pose(target_EE_pose)
+        # pass
     
     def _get_obs_extra(self, info):
         extra = dict()

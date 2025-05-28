@@ -78,7 +78,9 @@ env = gym.make(
         y_randomization_bounds=[-0.05, 0.05],
     ),
     # obs_mode="none",
-    control_mode="pd_ee_target_delta_pose",
+    # control_mode="pd_ee_target_delta_pose",
+    # control_mode="pd_ee_pose",
+    control_mode="pd_ee_target_pose",
     # control_mode="pd_ee_target_delta_pose_unnormalized",
     # control_mode="pd_ee_delta_pose",
     sim_config=dict(
@@ -98,6 +100,45 @@ env = gym.make(
         shader_pack="minimal"
     )
 )
+#%%
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+
+gripper_dims = np.array([
+    [0.032, 0.1, .033], # x, y, z (width, depth, height) main body
+    [.018/2, .027/2, .054/2], # x, y, z (width, depth, height) finger
+    [.018/2, .027/2, .054/2], # x, y, z (width, depth, height) finger
+])
+
+z_bottom_of_finger_to_center = 0.009
+z_top_of_finger_to_bottom_of_body = 0.007
+
+gripper_centers = np.array([
+    [0, 0, -(gripper_dims[0, 2] + (gripper_dims[1,2]*2 - z_bottom_of_finger_to_center) - z_top_of_finger_to_bottom_of_body)], # main body
+    [0, gripper_dims[1,1], -(gripper_dims[1,2]-z_bottom_of_finger_to_center)], # finger 1
+    [0, -gripper_dims[1,1], -(gripper_dims[1,2]-z_bottom_of_finger_to_center)], # finger 2
+])
+
+gripper_orientations = R.from_quat([
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+])
+#%%
+world_tf_gripper_posquat = env.get_state_dict()['actors']['target_EE_pose'][0].cpu().numpy()[:7]
+world_tf_gripper = np.eye(4)
+world_tf_gripper[:3, :3] = R.from_quat(world_tf_gripper_posquat[3:], scalar_first=True).as_matrix()
+world_tf_gripper[:3, 3] = world_tf_gripper_posquat[:3]
+world_tf_gripper_rot = R.from_quat(world_tf_gripper_posquat[3:], scalar_first=True)
+#%%
+
+# transform box centers and orientations to world frame
+new_gripper_centers = (world_tf_gripper[:3, :3] @ gripper_centers.T).T + world_tf_gripper[:3, 3]
+
+new_gripper_orientations = R.from_matrix(world_tf_gripper[:3, :3] @ gripper_orientations.as_matrix())
+#%%
+new_gripper_centers_alt = world_tf_gripper_rot.apply(gripper_centers) + world_tf_gripper[:3, 3]
+new_gripper_orientations_alt = world_tf_gripper_rot*gripper_orientations
 #%%
 
 rerun_output_dir = Path("/mnt/crucialSSD/maniskill_evals/rerun_test")

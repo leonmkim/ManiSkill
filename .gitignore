@@ -45,6 +45,6 @@ imgui.ini
 .coverage*
 htmlcov/
 
-scratch/*.mp4
+scratch/**/*.mp4
 scratch/demos/*
 scratch/cfgs/*
