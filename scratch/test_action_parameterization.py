@@ -16,6 +16,7 @@ from mani_skill.utils.visualization.misc import images_to_video
 from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
 from mani_skill.envs.tasks.tabletop.book_insertion import GraspedBookConfig, BookEndsConfig, EnvBooksConfig, SlotConfig
+from mani_skill.utils.common import get_delta_actions_from_plan_target_poses
 
 import zarr
 ZARR_VERSION=int(zarr.__version__.split('.')[0])
@@ -58,6 +59,10 @@ def construct_env_state_dict(zarr_data, index):
 
     return env_state_dict
 #%%
+
+demo_path = Path('/mnt/crucialSSD/maniskill_evals/frankagym_pixels/FrankaInsertion-v1/106788_0/150000/seed_start_1000000_seed_end_1000003/2025-05-31_18-49-08/20250531_184911.zarr')
+demo = zarr.open(demo_path, mode='r')
+#%%
 # demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act')
 # demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/1_sim_demos_w_recovery_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act')
 demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/test_action_reparameterization_just_pitch_then_roll_1_demo')
@@ -67,18 +72,6 @@ vid_output_dir = Path('.') / demo_path.name
 vid_output_dir.mkdir(exist_ok=True, parents=True)
 demo = zarr.open(demo_path / 'demos.zarr', mode='r')
 json_data = load_json(demo_path / 'demos.json')
-#%%
-rot_actions = demo['data']['action'][:, 3:6]
-# plot the time series of the rotation actions
-plt.figure(figsize=(10, 5))
-plt.plot(rot_actions[:, 0], label='x')
-plt.plot(rot_actions[:, 1], label='y')
-plt.plot(rot_actions[:, 2], label='z')
-plt.xlabel('Time step')
-plt.ylabel('Rotation action')
-plt.title('Rotation Actions Over Time')
-plt.legend()
-plt.grid()
 #%%
 rgb_images = demo['data']['observation.rgb']
 
@@ -185,7 +178,7 @@ assert episode_end_idx - episode_start_idx == num_steps, f"mismatch in episode s
 
 #%%
 from mani_skill.utils.common import apply_transform_to_poses
-action_plan_length = len(demo['data']['action'][episode_start_idx:episode_start_idx+num_steps])
+action_plan_length = len(demo['data']['action'][episode_start_idx:episode_start_idx+num_steps])-1
 assert num_steps >= action_plan_length, f"num_steps {num_steps} < action_plan_length {action_plan_length}"
 idx_in_episode = 0
 idx = episode_start_idx + idx_in_episode
@@ -203,9 +196,78 @@ gt_delta_actions_normalized = torch.from_numpy(demo['data']['action'][idx:idx+ac
 gt_delta_actions = gt_delta_actions_normalized.clone()
 gt_delta_actions[:, :6] = .01* (gt_delta_actions_normalized[:, :6] - 0.5 * (action_high + action_low)) / (0.5 * (action_high - action_low))
 gt_delta_actions[:, 3:6] *= -1.0 # for some reason, the rotation flips sign when they normalize the actions
-
+#%%
+# current_target_pose = torch.from_numpy(demo['data']['actors']['target_EE_pose'][env_state_idx:env_state_idx+1, :7])
+# plan_target_poses = torch.from_numpy(demo['data']['actors']['target_EE_pose'][env_state_idx+1:env_state_idx+1+action_plan_length, :7])
+current_target_pose = torch.from_numpy(demo['data']['observation.target_pose'][env_state_idx:env_state_idx+1, :7])
+plan_target_poses = torch.from_numpy(demo['data']['observation.target_pose'][env_state_idx+1:env_state_idx+1+action_plan_length, :7])
+all_target_poses = torch.concat((current_target_pose, plan_target_poses), dim=0)
+delta_actions_from_plan_target_poses_in_axis_angle = get_delta_actions_from_plan_target_poses(all_target_poses, gripper_actions=gt_delta_actions[:, -1], input_rotation_representation='quaternion', output_rotation_representation='axis_angle')
+delta_actions_from_plan_target_poses_in_euler_angles = get_delta_actions_from_plan_target_poses(all_target_poses, gripper_actions=gt_delta_actions[:, -1], input_rotation_representation='quaternion', output_rotation_representation='euler_angles')
+#%%
+trans_actions = gt_delta_actions[:, :3]
+# plot the time series of the rotation actions
+plt.figure(figsize=(10, 5))
+plt.plot(trans_actions[:, 0], label='x')
+plt.plot(trans_actions[:, 1], label='y')
+plt.plot(trans_actions[:, 2], label='z')
+plt.xlabel('Time step')
+plt.ylabel('Translation action')
+plt.title('Translation Actions Over Time')
+plt.legend()
+plt.grid()
+#%%
+trans_actions = delta_actions_from_plan_target_poses_in_axis_angle[:, :3]
+# plot the time series of the rotation actions
+plt.figure(figsize=(10, 5))
+plt.plot(trans_actions[:, 0], label='x')
+plt.plot(trans_actions[:, 1], label='y')
+plt.plot(trans_actions[:, 2], label='z')
+plt.xlabel('Time step')
+plt.ylabel('Translation action')
+plt.title('Translation Actions Over Time')
+plt.legend()
+plt.grid()
+#%%
+trans_actions = delta_actions_from_plan_target_poses_in_euler_angles[:, :3]
+# plot the time series of the rotation actions
+plt.figure(figsize=(10, 5))
+plt.plot(trans_actions[:, 0], label='x')
+plt.plot(trans_actions[:, 1], label='y')
+plt.plot(trans_actions[:, 2], label='z')
+plt.xlabel('Time step')
+plt.ylabel('Rotation action')
+plt.title('Rotation Actions Over Time')
+plt.legend()
+plt.grid()
 #%%
 rot_actions = gt_delta_actions[:, 3:6]
+# plot the time series of the rotation actions
+plt.figure(figsize=(10, 5))
+plt.plot(rot_actions[:, 0], label='x')
+plt.plot(rot_actions[:, 1], label='y')
+plt.plot(rot_actions[:, 2], label='z')
+plt.xlabel('Time step')
+plt.ylabel('Rotation action')
+plt.title('Rotation Actions Over Time')
+plt.legend()
+plt.grid()
+#%%
+# rot_actions = delta_actions_from_plan_target_poses_in_axis_angle[:, 3:6]
+rot_actions = delta_actions_from_plan_target_poses_in_axis_angle[:, 3:6] - gt_delta_actions[:, 3:6]
+# plot the time series of the rotation actions
+plt.figure(figsize=(10, 5))
+plt.plot(rot_actions[:, 0], label='x')
+plt.plot(rot_actions[:, 1], label='y')
+plt.plot(rot_actions[:, 2], label='z')
+plt.xlabel('Time step')
+plt.ylabel('Rotation action')
+plt.title('Rotation Actions Over Time')
+plt.legend()
+plt.grid()
+#%%
+# rot_actions = delta_actions_from_plan_target_poses_in_euler_angles[:, 3:6]
+rot_actions = delta_actions_from_plan_target_poses_in_euler_angles[:, 3:6] - gt_delta_actions[:, 3:6]
 # plot the time series of the rotation actions
 plt.figure(figsize=(10, 5))
 plt.plot(rot_actions[:, 0], label='x')
@@ -432,11 +494,7 @@ plan_target_poses_in_current_pose = apply_transform_to_poses(current_pose, plan_
 from mani_skill.utils.common import get_plan_target_poses_in_current_pose_scipy
 plan_target_poses_in_current_pose_scipy = get_plan_target_poses_in_current_pose_scipy(current_pose, plan_target_poses, rotation_representation='axis_angle')
 #%%
-# current_target_pose = torch.from_numpy(demo['data']['actors']['target_EE_pose'][idx:idx+1])
-# current_target_pose_in_current_pose = get_plan_target_poses_in_current_pose(current_pose, current_target_pose, rotation_representation='axis_angle')
 
-# all_target_poses_in_current_pose = torch.concat((current_target_pose_in_current_pose, plan_target_poses_in_current_pose), dim=0)
-# delta_actions_from_current_pose = get_delta_actions_from_plan_target_poses(all_target_poses_in_current_pose, gt_delta_actions[:, 6:], input_rotation_representation='axis_angle', output_rotation_representation='axis_angle')
 #%%
 # frames_with_reconstruct_in_current_pose = []
 # obs, info = env.reset(seed=seed)

@@ -222,111 +222,8 @@ for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), tot
     if snap_to_env_state:
         current_env_state_dict = construct_env_state_dict(zarr_store['data'], env_state_episode_start_idx)
         env.set_state_dict(current_env_state_dict)
-    # # plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy())
-
-    # base_camera_intrinsic_cv = env.scene.sensors['base_camera'].get_params()['intrinsic_cv'][0].clone()
-
-    # base_camera_cam2world_gl = env.scene.sensors['base_camera'].get_params()['cam2world_gl'][0].clone() # this is world to cam
-    # tm_camera = create_trimesh_camera(base_camera_intrinsic_cv, base_camera_cam2world_gl.cpu().numpy())
-
-    # #%%
-    # # # frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
-    # # # frame = (frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
-    # # # frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
-    # # # frame = cv2.cvtColor(env.render()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
-    # # frame = cv2.cvtColor(env.render_sensors()[0,:, :320].cpu().numpy(), cv2.COLOR_RGB2BGR)
-    # # recorded_frame = zarr_store['data']['observation.rgb'][episode_start_idx]
-    # # # assert (recorded_frame == frame).all(), "mismatch in recorded frame"
-    # # # print(np.ptp(recorded_frame - frame))
-    # # # recorded_frame = zarr_store['data'].gt_segmentation['observation.EE_obj_mask'][episode_start_idx]
-    # # # repeat to match 3 channels
-    # # # recorded_frame = np.repeat(recorded_frame[:, :, np.newaxis], 3, axis=2)
-    # # # max_segmentation_id = recorded_frame.max()
-    # # # recorded_frame = (recorded_frame / max_segmentation_id * 255).astype(np.uint8)
-
-    # # frame = (frame*0.5 + recorded_frame*0.5).astype(np.uint8)
-    # # # frame = (frame*recorded_frame).astype(np.uint8)
-
-    # # # frame = cv2.resize(frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
-    # # # cv2.imshow("frame", frame)
-    # # # plt.imshow(frame)
-
-    # # # viewer = env.render_human()
-    # # # viewer.paused = True
-    # # # #%%
-
-    # # # camera_marker = camera_marker_transformed(tm_camera)
-    # #%%
-    # # make a book using the sizes and poses from the env
-
-    # # EE_object_mesh = env.non_merged_grasped_books_list[0].get_collision_meshes()[0]
-    # # EE_object_transform = env.non_merged_grasped_books_list[0].pose
-
-    # length, width, height = env.grasped_book_sizes[0].tolist()
-    # binding_thickness = env.binding_thickness
-    # cover_thickness = env.cover_thickness
-    # cover_overhang = env.cover_overhang
-    # EE_object_transform = convert_sapien_pose_to_transform_matrix(env.non_merged_grasped_books_list[0].pose)
-
-    # EE_object_mesh_list = get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=EE_object_transform)
-    # EE_object_mesh = tm.util.concatenate(EE_object_mesh_list)
-    # #%%
-    # env_book_sizes_list = [env.env_book_sizes[0,i].tolist() for i in range(env.non_merged_env_books_list)]
-    # env_book_poses_list = [convert_sapien_pose_to_transform_matrix(env_book_over_envs[0].pose) for env_book_over_envs in env.non_merged_env_books_list]
-    # env_object_meshes_list = get_env_object_meshes_list(env_book_sizes_list, env_book_poses_list, binding_thickness, cover_thickness, cover_overhang)
-
-    # # table_mesh = env.table_scene.table.get_collision_meshes()
-
-    # table_length, table_width, table_height = env.table_scene.table_length, env.table_scene.table_width, env.table_scene.table_height
-    # table_pose = convert_sapien_pose_to_transform_matrix(env.table_scene.table.pose)
-    # table_mesh = get_table_primitive_mesh_list(table_length, table_width, table_height, global_transform=table_pose)
-    # #%%
-    # env_mesh = tm.util.concatenate(env_object_meshes_list + table_mesh)
-    # env_mesh_list = env_object_meshes_list + table_mesh
-    # #%%
-
-    # ray_origins, ray_directions, pixels_uv = generate_rays_from_camera(tm_camera)
-    # env_hit_min_locations, env_hit_min_pixels_uv, env_hit_min_distances, env_hit_min_index_tri, env_hit_min_ray_directions = get_min_grasped_obj_sdf_at_env_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh, EE_object_mesh_list)
-    # EE_obj_sdf_on_env_image, EE_obj_sdf_on_env_mask = generate_min_distances_image(env_hit_min_pixels_uv, env_hit_min_distances, tm_camera.resolution[::-1])
-    # EE_obj_sdf_on_env_image = EE_obj_sdf_on_env_image.astype(np.float32)[:240, :320, np.newaxis]
-    # EE_obj_sdf_on_env_mask = EE_obj_sdf_on_env_mask.astype(bool)[:240, :320]
-    # assert EE_obj_sdf_on_env_image.shape == image_shape + (1,)
-    # # plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
-    # # plt.imshow(EE_obj_sdf_on_env_image)
-    # # plt.imshow(scene_img, alpha=0.3)
-    # #%%
-    # min_env_surface_normals = env_mesh.face_normals[env_hit_min_index_tri]
-    # env_xyz_normals_image, env_xyz_normals_image_mask = normals_to_xyz_map(min_env_surface_normals, tm_camera.resolution[::-1], env_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
-    # env_xyz_normals_image = env_xyz_normals_image.astype(np.float32)[:240, :320]
-    # env_xyz_normals_image_mask = env_xyz_normals_image_mask.astype(bool)[:240, :320]
-    # # plt.imshow(env_xyz_normals_image, alpha=0.5)
-    # # plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
-    # assert env_xyz_normals_image.shape == image_shape + (3,)
-    # #%%
-    # EE_obj_hit_min_locations, EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, EE_obj_hit_min_index_tri, EE_obj_hit_min_ray_directions = get_min_env_sdf_at_grasped_obj_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh_list, EE_object_mesh)
-    # env_sdf_on_EE_obj_image, env_sdf_on_EE_obj_mask = generate_min_distances_image(EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, tm_camera.resolution[::-1])
-    # env_sdf_on_EE_obj_image = env_sdf_on_EE_obj_image.astype(np.float32)[:240, :320, np.newaxis]
-    # env_sdf_on_EE_obj_mask = env_sdf_on_EE_obj_mask.astype(bool)[:240, :320]
-    # # plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
-    # # plt.imshow(env_sdf_on_EE_obj_image)
-    # assert env_sdf_on_EE_obj_image.shape == image_shape + (1,)
-    # #%%
-    # min_EE_object_surface_normals = EE_object_mesh.face_normals[EE_obj_hit_min_index_tri] # these are normalized already
-    # EE_object_xyz_normals_image, EE_object_xyz_normals_image_mask = normals_to_xyz_map(min_EE_object_surface_normals, tm_camera.resolution[::-1], EE_obj_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
-    # EE_object_xyz_normals_image = EE_object_xyz_normals_image.astype(np.float32)[:240, :320]
-    # EE_object_xyz_normals_image_mask = EE_object_xyz_normals_image_mask.astype(bool)[:240, :320]
-
-    # # plt.imshow(EE_object_xyz_normals_image, alpha=0.5)
-    # # plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
-    # assert EE_object_xyz_normals_image.shape == image_shape + (3,)
     #%%
     if record_contact_features:
-        # zarr_gt_contact['observation.env_dtc_map'].append(EE_obj_sdf_on_env_image[np.newaxis, ...])
-        # zarr_gt_contact['observation.env_normals_map'].append(env_xyz_normals_image[np.newaxis, ...])
-        # zarr_gt_contact['observation.EE_dtc_map'].append(env_sdf_on_EE_obj_image[np.newaxis, ...])
-        # zarr_gt_contact['observation.EE_normals_map'].append(EE_object_xyz_normals_image[np.newaxis, ...])
-        
-        # the obs from the env already has a dimension at the beginning for num_envs
         contact_features_dict = env.get_extra_contact_features(True, True)
         zarr_gt_contact['observation.env_dtc_map'].append(contact_features_dict['env_dtc_map'].cpu().numpy())
         zarr_gt_contact['observation.env_normals_map'].append(contact_features_dict['env_normals_map'].cpu().numpy())
@@ -334,8 +231,6 @@ for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), tot
         zarr_gt_contact['observation.EE_normals_map'].append(contact_features_dict['EE_normals_map'].cpu().numpy())
 
     #%%
-    # frames = [env.render_rgb_array()[0].cpu().numpy()]
-    # for i in tqdm.tqdm(range(500)):
     start_time = time.perf_counter()
     # while True:
     for i in tqdm.tqdm(range(num_steps)):
@@ -346,111 +241,11 @@ for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), tot
             current_env_state_dict = construct_env_state_dict(zarr_store['data'], env_state_episode_start_idx + i + 1)
             env.set_state_dict(current_env_state_dict)
 
-        # current_frame = cv2.cvtColor(env.render_sensors()[0,:, :320].cpu().numpy(), cv2.COLOR_RGB2BGR)
-        # # current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
-        # # current_frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
-        # # current_frame = obs['sensor_data']['base_camera']['Color'][0][:,:,:3].cpu().numpy()
-        # # recorded_frame = zarr_store['data']['observation.rgb'][min(episode_start_idx + i + 1, episode_end_idx - 1)]
-        # recorded_frame = zarr_store['data']['observation.rgb'][min(episode_start_idx + i + 1, episode_end_idx - 1)]
-        # # recorded_frame = zarr_store['data'].gt_segmentation['observation.EE_obj_mask'][min(episode_start_idx + i + 1, episode_end_idx - 1)]
-        # # recorded_frame = (recorded_frame / max_segmentation_id * 255).astype(np.uint8)
-        # current_frame = (current_frame*0.5 + recorded_frame*0.5).astype(np.uint8)
-        # # current_frame = (current_frame*recorded_frame).astype(np.uint8)
-        # # current_frame = (current_frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
-        # # current_frame = cv2.resize(current_frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
-
-        # # assert (recorded_frame == current_frame).all(), "mismatch in recorded frame"
-        # # print(np.ptp(recorded_frame - current_frame))
-
-        # cv2.imshow("frame", current_frame)
-        # # plt.imshow(current_frame)
-        # key = cv2.waitKey(1) & 0xFF
-        # if key == ord('q') or key == ord('c') or key == ord('r'):
-        #     break
-
-        # if viewer.window.key_press('q'):
-        #     # q: quit the script and stop collecting data. Save trajectories and optionally videos.
-        #     # c: stop this episode and record the trajectory and move on to a new episode
-        #     # r: restart
-        #     key = ord('q')
-        #     break
-        # elif viewer.window.key_press('c'): 
-        #     key = ord('c')
-        #     break
-        # elif viewer.window.key_press('r'):
-        #     key = ord('r')
-        #     break
-
-        # make a book using the sizes and poses from the env
-
-        # EE_object_mesh = env.non_merged_grasped_books_list[0].get_collision_meshes()[0]
-        # EE_object_transform = env.non_merged_grasped_books_list[0].pose
 
         # don't save if its the last step
         if i < num_steps - 1:
-            # length, width, height = env.grasped_book_sizes[0].tolist()
-            # binding_thickness = env.binding_thickness
-            # cover_thickness = env.cover_thickness
-            # cover_overhang = env.cover_overhang
-            # EE_object_transform = convert_sapien_pose_to_transform_matrix(env.non_merged_grasped_books_list[0].pose)
-
-            # EE_object_mesh_list = get_book_primitive_mesh_list(length, width, height, binding_thickness, cover_thickness, cover_overhang, global_transform=EE_object_transform)
-            # EE_object_mesh = tm.util.concatenate(EE_object_mesh_list)
-            # #%%
-            # env_book_sizes_list = [env.env_book_sizes[0,i].tolist() for i in range(env.non_merged_env_books_list)]
-            # env_book_poses_list = [convert_sapien_pose_to_transform_matrix(env_book_over_envs[0].pose) for env_book_over_envs in env.non_merged_env_books_list]
-            # env_object_meshes_list = get_env_object_meshes_list(env_book_sizes_list, env_book_poses_list, binding_thickness, cover_thickness, cover_overhang)
-            # # table_mesh = env.table_scene.table.get_collision_meshes()
-
-            # table_length, table_width, table_height = env.table_scene.table_length, env.table_scene.table_width, env.table_scene.table_height
-            # table_pose = convert_sapien_pose_to_transform_matrix(env.table_scene.table.pose)
-            # table_mesh = get_table_primitive_mesh_list(table_length, table_width, table_height, global_transform=table_pose)
-            # #%%
-            # env_mesh = tm.util.concatenate(env_object_meshes_list + table_mesh)
-            # env_mesh_list = env_object_meshes_list + table_mesh
-            # #%%
-
-            # ray_origins, ray_directions, pixels_uv = generate_rays_from_camera(tm_camera)
-            # env_hit_min_locations, env_hit_min_pixels_uv, env_hit_min_distances, env_hit_min_index_tri, env_hit_min_ray_directions = get_min_grasped_obj_sdf_at_env_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh, EE_object_mesh_list)
-            # EE_obj_sdf_on_env_image, EE_obj_sdf_on_env_mask = generate_min_distances_image(env_hit_min_pixels_uv, env_hit_min_distances, tm_camera.resolution[::-1])
-            # EE_obj_sdf_on_env_image = EE_obj_sdf_on_env_image.astype(np.float32)[:240, :320, np.newaxis]
-            # EE_obj_sdf_on_env_mask = EE_obj_sdf_on_env_mask.astype(bool)[:240, :320]
-            # assert EE_obj_sdf_on_env_image.shape == image_shape + (1,)
-            # # plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
-            # # plt.imshow(EE_obj_sdf_on_env_image)
-            # # plt.imshow(scene_img, alpha=0.3)
-            # #%%
-            # min_env_surface_normals = env_mesh.face_normals[env_hit_min_index_tri]
-            # env_xyz_normals_image, env_xyz_normals_image_mask = normals_to_xyz_map(min_env_surface_normals, tm_camera.resolution[::-1], env_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
-            # env_xyz_normals_image = env_xyz_normals_image.astype(np.float32)[:240, :320]
-            # env_xyz_normals_image_mask = env_xyz_normals_image_mask.astype(bool)[:240, :320]
-            # # plt.imshow(env_xyz_normals_image, alpha=0.5)
-            # # plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
-            # assert env_xyz_normals_image.shape == image_shape + (3,)
-            # #%%
-            # EE_obj_hit_min_locations, EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, EE_obj_hit_min_index_tri, EE_obj_hit_min_ray_directions = get_min_env_sdf_at_grasped_obj_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh_list, EE_object_mesh)
-            # env_sdf_on_EE_obj_image, env_sdf_on_EE_obj_mask = generate_min_distances_image(EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, tm_camera.resolution[::-1])
-            # env_sdf_on_EE_obj_image = env_sdf_on_EE_obj_image.astype(np.float32)[:240, :320, np.newaxis]
-            # env_sdf_on_EE_obj_mask = env_sdf_on_EE_obj_mask.astype(bool)[:240, :320]
-            # # plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
-            # # plt.imshow(env_sdf_on_EE_obj_image)
-            # assert env_sdf_on_EE_obj_image.shape == image_shape + (1,)
-            # #%%
-            # min_EE_object_surface_normals = EE_object_mesh.face_normals[EE_obj_hit_min_index_tri] # these are normalized already
-            # EE_object_xyz_normals_image, EE_object_xyz_normals_image_mask = normals_to_xyz_map(min_EE_object_surface_normals, tm_camera.resolution[::-1], EE_obj_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
-            # EE_object_xyz_normals_image = EE_object_xyz_normals_image.astype(np.float32)[:240, :320]
-            # EE_object_xyz_normals_image_mask = EE_object_xyz_normals_image_mask.astype(bool)[:240, :320]
-
-            # # plt.imshow(EE_object_xyz_normals_image, alpha=0.5)
-            # # plt.imshow(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), alpha=0.5)
-            # assert EE_object_xyz_normals_image.shape == image_shape + (3,)
             #%%
             if record_contact_features:
-                # zarr_gt_contact['observation.env_dtc_map'].append(EE_obj_sdf_on_env_image[np.newaxis, ...])
-                # zarr_gt_contact['observation.env_normals_map'].append(env_xyz_normals_image[np.newaxis, ...])
-                # zarr_gt_contact['observation.EE_dtc_map'].append(env_sdf_on_EE_obj_image[np.newaxis, ...])
-                # zarr_gt_contact['observation.EE_normals_map'].append(EE_object_xyz_normals_image[np.newaxis, ...])
-                
                 # the obs from the env already has a dimension at the beginning for num_envs
                 contact_features_dict = env.get_extra_contact_features(True, True)
                 zarr_gt_contact['observation.env_dtc_map'].append(contact_features_dict['env_dtc_map'].cpu().numpy())

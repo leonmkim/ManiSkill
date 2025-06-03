@@ -533,47 +533,71 @@ def unroll_delta_actions(delta_actions, init_pose, input_delta_rotation_represen
         gt_target_poses_in_current_pose[:, :, 3:6] = transforms.matrix_to_euler_angles(gt_target_orientations_in_current_pose, convention='XYZ')
     return gt_target_poses_in_current_pose
 
-def get_delta_actions_from_plan_target_poses(plan_target_poses, gripper_actions, input_rotation_representation='axis_angle', output_rotation_representation='axis_angle'):
+def get_delta_actions_from_plan_target_poses(plan_target_poses, gripper_actions=None, input_rotation_representation='quaternion', output_rotation_representation='euler_angles', translation_frame_convention='root', rotation_frame_convention='root'):
     '''
     Args:
+        NOTE: if frame convention is root, then poses MUST be expressed in the root frame!
         plan_target_poses: (N, 3+R) where R is 3 for axis angle or 4 for quaternion or 6 for 6D representation. Must be plan target poses expressed in a common frame
-        gripper_actions: (N-1, 1)
+        gripper_actions: (N-1)
     Returns:
         delta_actions_from_plan_target_poses: (N-1, 4+R) where the last element is the gripper action
     '''
-    assert input_rotation_representation in ['axis_angle', 'quaternion', '6d'], f"rotation_representation {input_rotation_representation} not supported"
-    if input_rotation_representation == 'axis_angle':
+    assert translation_frame_convention in ['body', 'root'], f"translation_frame_convention {translation_frame_convention} not supported"
+    assert rotation_frame_convention in ['body', 'root'], f"rotation_frame_convention {rotation_frame_convention} not supported"
+    assert input_rotation_representation in ['axis_angle', 'quaternion', '6d', 'euler_angles'], f"rotation_representation {input_rotation_representation} not supported"
+    assert output_rotation_representation in ['axis_angle', 'quaternion', '6d', 'euler_angles'], f"rotation_representation {output_rotation_representation} not supported"
+    if gripper_actions is not None:
+        assert gripper_actions.shape[0] == plan_target_poses.shape[0]-1, f"gripper_actions shape {gripper_actions.shape} and plan_target_poses shape {plan_target_poses.shape} not match"
+
+    if translation_frame_convention == 'body':
+        raise NotImplementedError("translation_frame_convention 'body' is not implemented yet")
+    if rotation_frame_convention == 'body':
+        raise NotImplementedError("rotation_frame_convention 'body' is not implemented yet")
+    
+    if input_rotation_representation in ['axis_angle', 'euler_angles']:
         assert plan_target_poses.shape[1] == 6, f"plan_target_poses shape {plan_target_poses.shape} not supported for axis_angle representation"
     elif input_rotation_representation == 'quaternion':
         assert plan_target_poses.shape[1] == 7, f"plan_target_poses shape {plan_target_poses.shape} not supported for quaternion representation"
     elif input_rotation_representation == '6d':
         assert plan_target_poses.shape[1] == 9, f"plan_target_poses shape {plan_target_poses.shape} not supported for 6d representation"
     
-    if output_rotation_representation == 'axis_angle':
+    if output_rotation_representation in ['axis_angle', 'euler_angles']:
         output_rotation_dim = 3
     elif output_rotation_representation == 'quaternion':
         output_rotation_dim = 4
     elif output_rotation_representation == '6d':
         output_rotation_dim = 6
-    delta_actions_from_plan_target_poses = torch.zeros((plan_target_poses.shape[0]-1, 4+output_rotation_dim))
+    
+    delta_actions_from_plan_target_poses = torch.zeros((plan_target_poses.shape[0]-1, 3+output_rotation_dim+(1 if gripper_actions is not None else 0)), dtype=torch.float32, device=plan_target_poses.device)
+    
     delta_actions_from_plan_target_poses[:, :3] = torch.diff(plan_target_poses[:, :3], dim=0)
+    
     if input_rotation_representation == 'axis_angle':
         current_plan_target_quaternions = transforms.axis_angle_to_quaternion(plan_target_poses[:-1, 3:])
         next_plan_target_quaternions = transforms.axis_angle_to_quaternion(plan_target_poses[1:, 3:])
+    elif input_rotation_representation == 'euler_angles':
+        current_plan_target_quaternions = transforms.matrix_to_quaternion(transforms.euler_angles_to_matrix(plan_target_poses[:-1, 3:6], convention='XYZ'))
+        next_plan_target_quaternions = transforms.matrix_to_quaternion(transforms.euler_angles_to_matrix(plan_target_poses[1:, 3:6], convention='XYZ'))
     elif input_rotation_representation == 'quaternion':
         current_plan_target_quaternions = plan_target_poses[:-1, 3:7]
         next_plan_target_quaternions = plan_target_poses[1:, 3:7]
     elif input_rotation_representation == '6d':
         current_plan_target_quaternions = transforms.matrix_to_quaternion(transforms.rotation_6d_to_matrix(plan_target_poses[:-1, 3:]))
         next_plan_target_quaternions = transforms.matrix_to_quaternion(transforms.rotation_6d_to_matrix(plan_target_poses[1:, 3:]))
+    
     delta_action_rotation = transforms.quaternion_multiply(next_plan_target_quaternions, transforms.quaternion_invert(current_plan_target_quaternions))
+
     if output_rotation_representation == 'axis_angle':
         delta_actions_from_plan_target_poses[:, 3:6] = transforms.quaternion_to_axis_angle(delta_action_rotation)
+    elif output_rotation_representation == 'euler_angles':
+        delta_actions_from_plan_target_poses[:, 3:6] = transforms.matrix_to_euler_angles(transforms.quaternion_to_matrix(delta_action_rotation), convention='XYZ')
     elif output_rotation_representation == 'quaternion':
         delta_actions_from_plan_target_poses[:, 3:7] = delta_action_rotation
     elif output_rotation_representation == '6d':
         delta_actions_from_plan_target_poses[:, 3:9] = transforms.matrix_to_rotation_6d(transforms.quaternion_to_matrix(delta_action_rotation))
-    delta_actions_from_plan_target_poses[:, 3+output_rotation_dim:3+output_rotation_dim+1] = gripper_actions # the last element is the gripper action
+
+    if gripper_actions is not None:
+        delta_actions_from_plan_target_poses[:, -1] = gripper_actions # the last element is the gripper action
     return delta_actions_from_plan_target_poses
 
 def change_rotation_representation(poses, gripper_actions=None, input_rotation_representation='axis_angle', output_rotation_representation='axis_angle'):

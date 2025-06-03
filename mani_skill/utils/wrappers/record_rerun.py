@@ -3,12 +3,13 @@ from pathlib import Path
 path_to_workspace_root = Path(__file__).resolve().parents[4]
 
 # self.franka_urdf_logger = URDFLogger(franka_urdf_path, root_path="world/robot/")
-path_to_rerun = path_to_workspace_root / 'rerun'
+path_to_rerun = path_to_workspace_root / 'rerun_utils'
 import sys
 sys.path.append(str(path_to_rerun))
 from rerun_loader_urdf import URDFLogger
 #%%
 import copy
+import inspect
 import time
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Union
@@ -44,6 +45,10 @@ import distinctipy
 import matplotlib.pyplot as plt
 import cmasher as cmr
 import cv2
+
+from typing import Tuple
+from pytorch3d import transforms
+from torch import Tensor
 
 # NOTE (stao): The code for record.py is quite messy and perhaps confusing as it is trying to support both recording on CPU and GPU seamlessly
 # and handle partial resets. It works but can be claned up a lot.
@@ -327,11 +332,14 @@ class RecordEpisodeRerun(gym.Wrapper):
         env: BaseEnv,
         output_dir: str,
         policy_name: str,
+        policy_2_name: Optional[str] = None, # for multi-policy envs, e.g. ManiSkill2
         only_log_tfs: bool = False, # whether to log the abstract geometries everytime or only the tfs. False allows trailing visual history of the gripper
         log_action_plan_lumped: bool = True,
+        recording_id: Optional[str] = None,
     ) -> None:
         super().__init__(env)
         self.policy_name = policy_name
+        self.policy_2_name = policy_2_name
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._elapsed_record_steps = 0
@@ -339,6 +347,8 @@ class RecordEpisodeRerun(gym.Wrapper):
         self.current_path_to_rrd = None
         self.only_log_tfs = only_log_tfs
         self.log_action_plan_lumped = log_action_plan_lumped
+        self.recording_id = recording_id
+        self.rerun_recording = None
 
         # check if wrapped env is already wrapped by a CPU gym wrapper
         cur_env = self.env
@@ -352,7 +362,7 @@ class RecordEpisodeRerun(gym.Wrapper):
             else:
                 break
 
-    def init_new_rrd(self, rerun_name):
+    def init_new_rrd(self, rerun_name, recording_id=None):
         # ###############################
         # rerun stuff
         # ###############################
@@ -360,9 +370,12 @@ class RecordEpisodeRerun(gym.Wrapper):
         rrd_name = rerun_name + ".rrd"
         path_to_rrd = self.output_dir / rrd_name
         self.current_path_to_rrd = path_to_rrd
-        recording_id = str(uuid.uuid4())
-        rr.init("record_maniskill_rerun", recording_id=recording_id, spawn=False, strict=True)
-        rr.save(path_to_rrd)
+        if recording_id is None:
+            recording_id = str(uuid.uuid4())
+        self.rerun_recording = rr.RecordingStream("record_maniskill_rerun", recording_id=recording_id)
+        
+        # rr.init("record_maniskill_rerun", recording_id=recording_id, spawn=False, strict=True)
+        self.rerun_recording.save(path_to_rrd)
 
         self.sim_dt_bw_step = 1.0 / self.env.sim_config.control_freq
 
@@ -395,9 +408,10 @@ class RecordEpisodeRerun(gym.Wrapper):
             cy=self.color_K[1, 2],
         )
 
-        rr.log(
+        self.rerun_recording.log(
             # "world/camera/color", 
-            "world/camera", 
+            # "world/camera", 
+            f"world/{self.policy_name}/camera", 
             rr.Pinhole(
             image_from_camera=self.world_camera_intrinsics.intrinsic_matrix,
             resolution=[self.world_camera_intrinsics.width, self.world_camera_intrinsics.height],
@@ -405,9 +419,10 @@ class RecordEpisodeRerun(gym.Wrapper):
             ),
             static=True,
         )
-        rr.log(
+        self.rerun_recording.log(
             # "world/camera/color", 
-            "world/camera", 
+            # "world/camera", 
+            f"world/{self.policy_name}/camera", 
             rr.Transform3D(
             translation=self.world_tf_cam[:3, 3],
             mat3x3=self.world_tf_cam[:3, :3],
@@ -446,7 +461,7 @@ class RecordEpisodeRerun(gym.Wrapper):
         # and finally, next 18 are joint positions and velocities (9 because 7 for joints and 2 for gripper)
         franka_state = self.env.agent.robot.get_state()[0].cpu().numpy()
 
-        rr.log("world/robot", rr.Transform3D(
+        self.rerun_recording.log(f"world/{self.policy_name}/robot", rr.Transform3D(
             translation=franka_state[:3],
             # mat3x3=np.eye(3),
             quaternion=franka_state[[4,5,6,3]], # needed to convert from [w,x,y,z] to [x,y,z,w]
@@ -460,7 +475,7 @@ class RecordEpisodeRerun(gym.Wrapper):
         franka_urdf_path = path_to_contact_estimation / 'src/dataset/franka_meshes/panda.urdf'
         
         assert franka_urdf_path.exists()
-        self.franka_urdf_logger = URDFLogger(franka_urdf_path, root_path="world/robot/")
+        self.franka_urdf_logger = URDFLogger(franka_urdf_path, root_path=f"world/{self.policy_name}/robot/")
         self.franka_urdf_logger.log()
 
         joint_dict = self.fill_joint_dict(franka_state[13:20])
@@ -497,6 +512,9 @@ class RecordEpisodeRerun(gym.Wrapper):
         self.action_plan_cmap_str = 'cmr.swamp'
         self.action_plan_cmap_clamp = (0.2, 0.8)
 
+        self.action_plan_2_cmap_str = cmr.bubblegum # or possibly amber
+        self.action_plan_2_cmap_clamp = (0.4, 0.8)
+
         if self.only_log_tfs:
             current_gripper = self.get_abstract_gripper(
                     color=np.array([[1.0, 0.0, 0.0]]),
@@ -504,7 +522,7 @@ class RecordEpisodeRerun(gym.Wrapper):
                     label=None,
                     radius=0.0015,
                 )
-            rr.log("world/robot/end_effector/current_pose", 
+            self.rerun_recording.log(f"world/{self.policy_name}/robot/end_effector/current_pose", 
                 current_gripper,
                 static=True,
             )
@@ -519,7 +537,7 @@ class RecordEpisodeRerun(gym.Wrapper):
                     label=None,
                     radius=0.0015,
                 )
-            rr.log("world/robot/end_effector/target_pose",
+            self.rerun_recording.log(f"world/{self.policy_name}/robot/end_effector/target_pose",
                 target_gripper,
                 static=True,
             )
@@ -578,15 +596,16 @@ class RecordEpisodeRerun(gym.Wrapper):
             episode_timestamp: float,
             episode_step: int, 
             rerun_name: str,
+            rerun_recording: rr.RecordingStream,
             ) -> None:
         assert color_image.ndim == 3, f"Color image should be in HWC format, got {color_image.ndim}"
         assert color_image.shape[2] == 3, f"Color image should be in HWC format, got {color_image.shape}"
         assert color_image.dtype == np.uint8, f"Color image should be in uint8 format, got {color_image.dtype}"
+        
+        rerun_recording.set_time("episode_timestamp", timestamp=episode_timestamp)
+        rerun_recording.set_time("episode_step", sequence=episode_step)
 
-        rr.set_time("episode_timestamp", timestamp=episode_timestamp)
-        rr.set_time("episode_step", sequence=episode_step)
-
-        rr.log(rerun_name, rr.Image(color_image))
+        rerun_recording.log(rerun_name, rr.Image(color_image))
     
     def log_depth_image(
             self,
@@ -594,13 +613,14 @@ class RecordEpisodeRerun(gym.Wrapper):
             episode_timestamp: float, 
             episode_step: int,
             rerun_name: str,
+            rerun_recording: rr.RecordingStream,
             ) -> None:
         assert depth_image.dtype == np.uint16, f"Depth image should be in uint16 format, got {depth_image.dtype}"
 
-        rr.set_time("episode_timestamp", timestamp=episode_timestamp)
-        rr.set_time("episode_step", sequence=episode_step)
+        rerun_recording.set_time("episode_timestamp", timestamp=episode_timestamp)
+        rerun_recording.set_time("episode_step", sequence=episode_step)
 
-        rr.log(rerun_name, rr.DepthImage(depth_image, meter=1000)) # 1000 is to convert mm to m
+        rerun_recording.log(rerun_name, rr.DepthImage(depth_image, meter=1000)) # 1000 is to convert mm to m
     
     def log_colored_pointcloud(
                                 self,
@@ -611,6 +631,7 @@ class RecordEpisodeRerun(gym.Wrapper):
                                 camera_intrinsics: PinholeCameraIntrinsic,
                                 world_tf_cam: np.ndarray,
                                 base_rerun_name: str,
+                                rerun_recording: rr.RecordingStream,
                                 ) -> None:
         assert color_image.ndim == 3, f"Color image should be in HWC format, got {color_image.ndim}"
         assert color_image.shape[2] == 3, f"Color image should be in HWC format, got {color_image.shape}"
@@ -619,8 +640,8 @@ class RecordEpisodeRerun(gym.Wrapper):
         assert depth_image.dtype == np.uint16, f"Depth image should be in uint16 format, got {depth_image.dtype}"
 
 
-        rr.set_time("episode_timestamp", timestamp=episode_timestamp)
-        rr.set_time("episode_step", sequence=episode_step)
+        rerun_recording.set_time("episode_timestamp", timestamp=episode_timestamp)
+        rerun_recording.set_time("episode_step", sequence=episode_step)
 
         depth_image = depth_image.astype(np.float32)
 
@@ -639,22 +660,24 @@ class RecordEpisodeRerun(gym.Wrapper):
         pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, camera_intrinsics)
         pcd.transform(world_tf_cam)
 
-        rr.log(base_rerun_name + "/pointcloud", rr.Points3D(pcd.points, colors=pcd.colors))
+        rerun_recording.log(base_rerun_name + "/pointcloud", rr.Points3D(pcd.points, colors=pcd.colors))
 
-    def log_obs(self, obs):
+    def log_obs(self, obs, rerun_recording: rr.RecordingStream):
         color_image = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
         depth_image = obs['sensor_data']['base_camera']['depth'][0].cpu().numpy().astype(np.uint16)
         self.log_color_image(
             color_image,
             episode_timestamp=self._elapsed_record_steps * self.sim_dt_bw_step,
             episode_step=self._elapsed_record_steps,
-            rerun_name="world/camera/color",
+            rerun_name=f"world/{self.policy_name}/camera/color",
+            rerun_recording=rerun_recording,
         )
         self.log_depth_image(
             depth_image,
             episode_timestamp=self._elapsed_record_steps * self.sim_dt_bw_step,
             episode_step=self._elapsed_record_steps,
-            rerun_name="world/camera/depth",
+            rerun_name=f"world/{self.policy_name}/camera/depth",
+            rerun_recording=rerun_recording,
         )
         self.log_colored_pointcloud(
             color_image,
@@ -663,23 +686,26 @@ class RecordEpisodeRerun(gym.Wrapper):
             episode_step=self._elapsed_record_steps,
             camera_intrinsics=self.world_camera_intrinsics,
             world_tf_cam=self.world_tf_cam,
-            base_rerun_name="world",
+            base_rerun_name=f"world/{self.policy_name}",
+            rerun_recording=rerun_recording,
         )
         self.log_pose(
             obs['extra']['end_effector_pose'][0].cpu().numpy(),
             episode_timestamp=self._elapsed_record_steps * self.sim_dt_bw_step,
             episode_step=self._elapsed_record_steps,
-            rerun_name="world/robot/end_effector/current_pose",
+            rerun_name=f"world/{self.policy_name}/robot/end_effector/current_pose",
             color=np.array([1.0, 0.0, 0.0]), 
             radius=0.0015,
+            rerun_recording=rerun_recording,
         )
         self.log_pose(
             obs['agent']['controller']['arm']['target_pose'][0].cpu().numpy(),
             episode_timestamp=self._elapsed_record_steps * self.sim_dt_bw_step,
             episode_step=self._elapsed_record_steps,
-            rerun_name="world/robot/end_effector/target_pose",
+            rerun_name=f"world/{self.policy_name}/robot/end_effector/target_pose",
             color=np.array([0.0, 1.0, 0.0]), 
             radius=0.0015,
+            rerun_recording=rerun_recording,
         )
 
     def get_abstract_gripper(
@@ -773,15 +799,16 @@ class RecordEpisodeRerun(gym.Wrapper):
                 episode_timestamp: float,
                 episode_step: int,
                 rerun_name: str,
+                rerun_recording: rr.RecordingStream,
                 color:np.ndarray = np.array([1.0, 0.0, 0.0]),
                 radius: float=0.0015,
                 ) -> None:
-        rr.set_time("episode_timestamp", timestamp=episode_timestamp)
-        rr.set_time("episode_step", sequence=episode_step)
+        rerun_recording.set_time("episode_timestamp", timestamp=episode_timestamp)
+        rerun_recording.set_time("episode_step", sequence=episode_step)
 
         if self.only_log_tfs:
             
-            rr.log(rerun_name, 
+            rerun_recording.log(rerun_name, 
                 rr.Transform3D(
                 translation=pose[:3],
                 # mat3x3=pose[:3, :3],
@@ -797,11 +824,19 @@ class RecordEpisodeRerun(gym.Wrapper):
                 world_tf_gripper=pose[np.newaxis, :], # add batch dimension
             )
 
-            rr.log(rerun_name,
+            rerun_recording.log(rerun_name,
                 abstract_gripper,
             )
     # def record_action_plan(self, action_plan: np.ndarray, obs: dict, action_frame_expression: str, input_rotation_representation: str) -> None:
-    def record_action_plan(self, action_plan: np.ndarray, input_rotation_representation: str) -> None:
+    def record_action_plan(self, 
+                           action_plan: np.ndarray, 
+                           input_rotation_representation: str, 
+                           rerun_recording:rr.RecordingStream, 
+                           action_plan_2=None,
+                           action_plan_2_rotation_representation=None,
+                           action_plan_cmap_str: str='cmr.swamp',
+                           action_plan_cmap_clamp: Tuple[float, float]=(0.2, 0.8),
+                           ) -> None:
         '''
         action_plan: T x 3+R+1 where first 3 are translation and last R are rotation and then 1 is gripper action
         should already be in world frame
@@ -820,6 +855,21 @@ class RecordEpisodeRerun(gym.Wrapper):
         elif input_rotation_representation == "quaternion":
             # assume action_plan is already in quaternion format
             action_plan_reparam[:, 3:7] = action_plan[:, 3:7]
+        action_plan = action_plan_reparam
+
+        if action_plan_2 is not None:
+            action_plan_2_reparam = np.zeros((action_plan_2.shape[0], 7), dtype=np.float32)
+            action_plan_2_reparam[:, :3] = action_plan_2[:, :3] # first 3 are translation
+            if input_rotation_representation == "euler_angles":
+                # convert euler angles to axis angle
+                action_plan_2_reparam[:, 3:7] = R.from_euler('XYZ', action_plan_2[:, 3:6], degrees=False).as_quat(scalar_first=True)
+            elif input_rotation_representation == "axis_angle":
+                # convert axis angle to quaternion
+                action_plan_2_reparam[:, 3:7] = R.from_rotvec(action_plan_2[:, 3:6]).as_quat(scalar_first=True)
+            elif input_rotation_representation == "quaternion":
+                # assume action_plan is already in quaternion format
+                action_plan_2_reparam[:, 3:7] = action_plan_2[:, 3:7]
+            action_plan_2 = action_plan_2_reparam
 
         # end_effector_pose = obs['extra']['end_effector_pose'][0].cpu().numpy() # bx7->7
         # if action_frame_expression == "relative":
@@ -844,8 +894,24 @@ class RecordEpisodeRerun(gym.Wrapper):
             episode_timestamp=self._elapsed_record_steps * self.sim_dt_bw_step,
             episode_step=self._elapsed_record_steps,
             rerun_name=f"world/{self.policy_name}/action_plan",
+            action_plan_cmap_str=action_plan_cmap_str,
+            action_plan_cmap_clamp=action_plan_cmap_clamp,
             log_action_plan_lumped=self.log_action_plan_lumped,
+            rerun_recording=rerun_recording,
         )
+
+        if action_plan_2 is not None:
+            self.log_action_plan(
+                action_plan=action_plan_2_reparam,
+                # end_effector_pose=end_effector_pose,
+                episode_timestamp=self._elapsed_record_steps * self.sim_dt_bw_step,
+                episode_step=self._elapsed_record_steps,
+                rerun_name=f"world/{self.policy_2_name}/action_plan",
+                action_plan_cmap_str=self.action_plan_2_cmap_str,
+                action_plan_cmap_clamp=self.action_plan_2_cmap_clamp,
+                log_action_plan_lumped=self.log_action_plan_lumped,
+                rerun_recording=rerun_recording,
+            )
 
     def log_action_plan(
                         self,
@@ -854,14 +920,17 @@ class RecordEpisodeRerun(gym.Wrapper):
                         episode_timestamp: float,
                         episode_step: int,
                         rerun_name: str,
+                        action_plan_cmap_str: str,
+                        action_plan_cmap_clamp: Tuple[float, float],
+                        rerun_recording: rr.RecordingStream,
                         log_action_plan_lumped: bool=True,
                         ) -> None:
         '''
         Assumes action_plan is relative expression from the current_ end effector pose
         action_plan: T x 6+1 where first 3 are translation and last 3 are rotation (expressed in rotvec) and last 1 is gripper action
         '''
-        rr.set_time("episode_timestamp", timestamp=episode_timestamp)
-        rr.set_time("episode_step", sequence=episode_step)
+        rerun_recording.set_time("episode_timestamp", timestamp=episode_timestamp)
+        rerun_recording.set_time("episode_step", sequence=episode_step)
 
         action_plan_length = action_plan.shape[0]
 
@@ -872,11 +941,11 @@ class RecordEpisodeRerun(gym.Wrapper):
         # action_plan_positions = action_plan[:, :3] + end_effector_pose[:3]
         action_plan_positions = action_plan[:, :3]
         # action_plan_orientations = action_plan_rotations*end_effector_orientation
-        colors = np.array(cmr.take_cmap_colors(self.action_plan_cmap_str, action_plan_length, cmap_range=self.action_plan_cmap_clamp), dtype=np.float32)
+        colors = np.array(cmr.take_cmap_colors(action_plan_cmap_str, action_plan_length, cmap_range=action_plan_cmap_clamp), dtype=np.float32)
         if not log_action_plan_lumped:
             for i, (position, orientation) in enumerate(zip(action_plan_positions, action_plan_orientations)):
                 if self.only_log_tfs:
-                    rr.log(rerun_name + f"/{i}", rr.Transform3D(
+                    rerun_recording.log(rerun_name + f"/{i}", rr.Transform3D(
                         translation=position,
                         mat3x3=orientation.as_matrix(),
                     ),
@@ -895,7 +964,7 @@ class RecordEpisodeRerun(gym.Wrapper):
                         radius=0.0005,
                         world_tf_gripper=world_tf_gripper
                     )
-                    rr.log(f"{rerun_name}/{i}",
+                    rerun_recording.log(f"{rerun_name}/{i}",
                         gripper,
                     )
         else:
@@ -912,7 +981,7 @@ class RecordEpisodeRerun(gym.Wrapper):
                         radius=0.0005,
                         world_tf_gripper=action_plan
                     )
-            rr.log(rerun_name,
+            rerun_recording.log(rerun_name,
                 gripper,
             )
 
@@ -953,24 +1022,122 @@ class RecordEpisodeRerun(gym.Wrapper):
         if seed is not None:
             self.current_env_seed = seed
 
+        if self.rerun_recording is not None:
+            self.rerun_recording.flush()
+            self.rerun_recording = None
         # then close the rrd and start a new one
         rrd_filename = f"traj_{self._episode_id}_seed_{self.current_env_seed}"
-        self.init_new_rrd(rrd_filename)
+        self.init_new_rrd(rrd_filename, recording_id=self.recording_id)
 
         obs, info = super().reset(*args, seed=seed, options=options, **kwargs)
-        self.log_obs(obs)
+        self.log_obs(obs, rerun_recording=self.rerun_recording)
         # adding the "batch" dimension as is done by common.batch is creating the temporal dimension such that each array is Txbx(data dims), where b is num envs
         
         self.last_reset_kwargs = copy.deepcopy(dict(options=options, **kwargs))
         if seed is not None:
             self.last_reset_kwargs.update(seed=seed)
         return obs, info
+    
+    def log_action_plan_error(self, predicted_action_plan:Tensor, ground_truth_action_plan:Tensor, rotation_representation:str='euler_angles'):
+        '''
+        predicted_action_plan: BxHxN
+        ground_truth_action_plan: BxHxN
+        assumes that both are expressed in the same frame
+        assumes quaternions are with real/scalar part first
+        '''
+        assert predicted_action_plan.shape == ground_truth_action_plan.shape, f"predicted_action_plan and ground_truth_action_plan must have the same shape, but got {predicted_action_plan.shape} and {ground_truth_action_plan.shape}"
+        assert rotation_representation in ['euler_angles', 'quaternion', 'axis_angle'], f"rotation_representation must be one of ['euler_angles', 'quaternion', 'axis_angle'], but got {rotation_representation}"
+        if rotation_representation == 'euler_angles':
+            assert predicted_action_plan.shape[-1] == 6, f"predicted_action_plan must have 6 dimensions for euler angles, but got {predicted_action_plan.shape[-1]}"
+            predicted_action_orientations = transforms.matrix_to_quaternion(transforms.euler_angles_to_matrix(predicted_action_plan[:, :, 3:6], convention='XYZ'))
+            ground_truth_action_orientations = transforms.matrix_to_quaternion(transforms.euler_angles_to_matrix(ground_truth_action_plan[:, :, 3:6], convention='XYZ'))
+        elif rotation_representation == 'quaternion':
+            assert predicted_action_plan.shape[-1] == 7, f"predicted_action_plan must have 7 dimensions for quaternions, but got {predicted_action_plan.shape[-1]}"
+            predicted_action_orientations = predicted_action_plan[:, :, 3:7]
+            ground_truth_action_orientations = ground_truth_action_plan[:, :, 3:7]
+        elif rotation_representation == 'axis_angle':
+            assert predicted_action_plan.shape[-1] == 6, f"predicted_action_plan must have 6 dimensions for axis angles, but got {predicted_action_plan.shape[-1]}"
+            predicted_action_orientations = transforms.axis_angle_to_quaternion(predicted_action_plan[:, :, 3:6])
+            ground_truth_action_orientations = transforms.axis_angle_to_quaternion(ground_truth_action_plan[:, :, 3:6])
 
-    def step(self, action, start_signal=None):
-        obs, rew, terminated, truncated, info = super().step(action)
+        self.rerun_recording.set_time("episode_timestamp", timestamp=self._elapsed_record_steps * self.sim_dt_bw_step)
+        self.rerun_recording.set_time("episode_step", sequence=self._elapsed_record_steps)
+
+        ground_truth_to_predicted_rotation = transforms.quaternion_multiply(predicted_action_orientations, transforms.quaternion_invert(ground_truth_action_orientations))
+        ground_truth_to_predicted_rotation_axis_angle = transforms.quaternion_to_axis_angle(ground_truth_to_predicted_rotation)
+        ground_truth_to_predicted_rotation_angle_errors = torch.linalg.norm(ground_truth_to_predicted_rotation_axis_angle, dim=-1, ord=2, keepdim=True)
+        
+        predicted_action_positions = predicted_action_plan[:, :, :3]
+        ground_truth_action_positions = ground_truth_action_plan[:, :, :3]
+        # ground_truth_to_predicted_translation_errors_paper = predicted_action_positions - transforms.quaternion_apply(ground_truth_to_predicted_rotation, ground_truth_action_positions)
+        # trajectory_error_dict['ground_truth_to_predicted_translation_errors_paper'] = torch.linalg.norm(ground_truth_to_predicted_translation_errors_paper, dim=-1, p=2, keepdim=True)
+        
+        ground_truth_to_predicted_translation_errors_ours = predicted_action_positions - ground_truth_action_positions
+        ground_truth_to_predicted_translation_errors = torch.linalg.norm(ground_truth_to_predicted_translation_errors_ours, dim=-1, ord=2, keepdim=True)
+
+        trajectory_angle_error_rmse = torch.sqrt(torch.mean(ground_truth_to_predicted_rotation_angle_errors**2)).item()
+        self.rerun_recording.log(
+            f"world/action_plan_error/trajectory_angle_error_rmse",
+            rr.Scalars(
+                scalars=[trajectory_angle_error_rmse],
+            )
+        )
+        trajectory_translation_error_rmse = torch.sqrt(torch.mean(ground_truth_to_predicted_translation_errors**2)).item()
+        self.rerun_recording.log(
+            f"world/action_plan_error/trajectory_translation_error_rmse",
+            rr.Scalars(
+                scalars=[trajectory_translation_error_rmse],
+            )
+        )
+        trajectory_angle_error_mean = torch.mean(ground_truth_to_predicted_rotation_angle_errors).item()
+        self.rerun_recording.log(
+            f"world/action_plan_error/trajectory_angle_error_mean",
+            rr.Scalars(
+                scalars=[trajectory_angle_error_mean],
+            )
+        )
+        trajectory_translation_error_mean = torch.mean(ground_truth_to_predicted_translation_errors).item()
+        self.rerun_recording.log(
+            f"world/action_plan_error/trajectory_translation_error_mean",
+            rr.Scalars(
+                scalars=[trajectory_translation_error_mean],
+            )
+        )
+        trajectory_angle_error_max = torch.max(ground_truth_to_predicted_rotation_angle_errors).item()
+        self.rerun_recording.log(
+            f"world/action_plan_error/trajectory_angle_error_max",
+            rr.Scalars(
+                scalars=[trajectory_angle_error_max],
+            )
+        )
+        trajectory_translation_error_max = torch.max(ground_truth_to_predicted_translation_errors).item()
+        self.rerun_recording.log(
+            f"world/action_plan_error/trajectory_translation_error_max",
+            rr.Scalars(
+                scalars=[trajectory_translation_error_max],
+            )
+        )
+
+    def step(self, action, action_plan=None, action_plan_rotation_representation=None, start_signal=None, env_state_dict=None, action_plan_cmap_str='cmr.swamp', action_plan_cmap_clamp=(0.2, 0.8)):
+        if action_plan is not None:
+            assert action_plan_rotation_representation is not None, "action_plan_rotation_representation must be provided if action_plan is provided"
+            assert action_plan.ndim == 3, f"action_plan must be of shape (B, T, 7), got {action_plan.shape}"
+            self.record_action_plan(action_plan[0], action_plan_rotation_representation, rerun_recording=self.rerun_recording, action_plan_cmap_str=action_plan_cmap_str, action_plan_cmap_clamp=action_plan_cmap_clamp)
+
+        # print(inspect.signature(super().step).parameters)
+        # if 'action_plan' in inspect.signature(super().step).parameters:
+        if 'action_plan' in inspect.signature(self.env.step).parameters:
+            obs, rew, terminated, truncated, info = self.env.step(action, action_plan=action_plan, action_plan_rotation_representation=action_plan_rotation_representation)
+        else:
+            obs, rew, terminated, truncated, info = super().step(action)
+
+        # snap to env state if provided
+        if env_state_dict is not None:
+            self.env.set_state_dict(env_state_dict)
+
         self._elapsed_record_steps += 1
 
-        self.log_obs(obs)
+        self.log_obs(obs, rerun_recording=self.rerun_recording)
 
         franka_state = self.env.agent.robot.get_state()[0].cpu().numpy()
         joint_dict = self.fill_joint_dict(franka_state[13:20])
@@ -990,10 +1157,11 @@ class RecordEpisodeRerun(gym.Wrapper):
         EE_obj_mask = (trajectory_data_buffer['observation.segmentation'][:] == segmentation_id_map[f"{self.env.grasped_book.name}_0"]).astype(np.uint8)
         trajectory_data_buffer['observation.EE_obj_mask'].append(EE_obj_mask)
 
-
     def close(self) -> None:
-        # if self.current_path_to_rrd is not None:
-        #     rr.flush()
-            
-        rr.disconnect()
+        if self.rerun_recording is not None:
+            self.rerun_recording.flush()
+            self.rerun_recording.disconnect()
+            self.rerun_recording = None
+        
+        # rr.disconnect()
         return super().close()
