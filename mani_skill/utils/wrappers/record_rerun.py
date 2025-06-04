@@ -336,10 +336,12 @@ class RecordEpisodeRerun(gym.Wrapper):
         only_log_tfs: bool = False, # whether to log the abstract geometries everytime or only the tfs. False allows trailing visual history of the gripper
         log_action_plan_lumped: bool = True,
         recording_id: Optional[str] = None,
+        rollout_policy_name: Optional[str] = None,
     ) -> None:
         super().__init__(env)
         self.policy_name = policy_name
         self.policy_2_name = policy_2_name
+        self.rollout_policy_name = rollout_policy_name
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._elapsed_record_steps = 0
@@ -512,7 +514,7 @@ class RecordEpisodeRerun(gym.Wrapper):
         self.action_plan_cmap_str = 'cmr.swamp'
         self.action_plan_cmap_clamp = (0.2, 0.8)
 
-        self.action_plan_2_cmap_str = cmr.bubblegum # or possibly amber
+        self.action_plan_2_cmap_str = 'cmr.bubblegum' # or possibly amber
         self.action_plan_2_cmap_clamp = (0.4, 0.8)
 
         if self.only_log_tfs:
@@ -1047,6 +1049,9 @@ class RecordEpisodeRerun(gym.Wrapper):
         '''
         assert predicted_action_plan.shape == ground_truth_action_plan.shape, f"predicted_action_plan and ground_truth_action_plan must have the same shape, but got {predicted_action_plan.shape} and {ground_truth_action_plan.shape}"
         assert rotation_representation in ['euler_angles', 'quaternion', 'axis_angle'], f"rotation_representation must be one of ['euler_angles', 'quaternion', 'axis_angle'], but got {rotation_representation}"
+        # remove the last dimension which is the gripper action
+        predicted_action_plan = predicted_action_plan[..., :-1]
+        ground_truth_action_plan = ground_truth_action_plan[..., :-1]
         if rotation_representation == 'euler_angles':
             assert predicted_action_plan.shape[-1] == 6, f"predicted_action_plan must have 6 dimensions for euler angles, but got {predicted_action_plan.shape[-1]}"
             predicted_action_orientations = transforms.matrix_to_quaternion(transforms.euler_angles_to_matrix(predicted_action_plan[:, :, 3:6], convention='XYZ'))
@@ -1077,42 +1082,42 @@ class RecordEpisodeRerun(gym.Wrapper):
 
         trajectory_angle_error_rmse = torch.sqrt(torch.mean(ground_truth_to_predicted_rotation_angle_errors**2)).item()
         self.rerun_recording.log(
-            f"world/action_plan_error/trajectory_angle_error_rmse",
+            f"world/{self.policy_name}/action_plan/trajectory_angle_error_rmse",
             rr.Scalars(
                 scalars=[trajectory_angle_error_rmse],
             )
         )
         trajectory_translation_error_rmse = torch.sqrt(torch.mean(ground_truth_to_predicted_translation_errors**2)).item()
         self.rerun_recording.log(
-            f"world/action_plan_error/trajectory_translation_error_rmse",
+            f"world/{self.policy_name}/action_plan/trajectory_translation_error_rmse",
             rr.Scalars(
                 scalars=[trajectory_translation_error_rmse],
             )
         )
         trajectory_angle_error_mean = torch.mean(ground_truth_to_predicted_rotation_angle_errors).item()
         self.rerun_recording.log(
-            f"world/action_plan_error/trajectory_angle_error_mean",
+            f"world/{self.policy_name}/action_plan/trajectory_angle_error_mean",
             rr.Scalars(
                 scalars=[trajectory_angle_error_mean],
             )
         )
         trajectory_translation_error_mean = torch.mean(ground_truth_to_predicted_translation_errors).item()
         self.rerun_recording.log(
-            f"world/action_plan_error/trajectory_translation_error_mean",
+            f"world/{self.policy_name}/action_plan/trajectory_translation_error_mean",
             rr.Scalars(
                 scalars=[trajectory_translation_error_mean],
             )
         )
         trajectory_angle_error_max = torch.max(ground_truth_to_predicted_rotation_angle_errors).item()
         self.rerun_recording.log(
-            f"world/action_plan_error/trajectory_angle_error_max",
+            f"world/{self.policy_name}/action_plan/trajectory_angle_error_max",
             rr.Scalars(
                 scalars=[trajectory_angle_error_max],
             )
         )
         trajectory_translation_error_max = torch.max(ground_truth_to_predicted_translation_errors).item()
         self.rerun_recording.log(
-            f"world/action_plan_error/trajectory_translation_error_max",
+            f"world/{self.policy_name}/action_plan/trajectory_translation_error_max",
             rr.Scalars(
                 scalars=[trajectory_translation_error_max],
             )
