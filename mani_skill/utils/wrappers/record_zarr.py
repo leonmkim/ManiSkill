@@ -713,11 +713,6 @@ class RecordEpisodeZarr(gym.Wrapper):
 
     def step(self, action, action_plan=None, action_plan_rotation_representation=None, start_signal=None):
         assert action.ndim == 2, f"action must be of shape (num_envs, action_dim), but got {action.shape}"
-        if action_plan is not None:
-            assert action_plan.ndim == 3, f"action_plan must be of shape (num_envs, action_plan_length, action_dim), but got {action_plan.shape}"
-            assert action_plan.shape[0] == action.shape[0], f"action_plan and action must have the same number of environments, but got {action_plan.shape[0]} and {action.shape[0]}"
-            assert action_plan.shape[1] == self.action_plan_length, f"action_plan must have the same action plan length as the action plan length of the environment, but got {action_plan.shape[1]} and {self.action_plan_length}"
-            assert action_plan.shape[2] == action.shape[1], f"action_plan and action must have the same action dimension, but got {action_plan.shape[2]} and {action.shape[1]}"
         if self.save_video and self._video_steps == 0:
             # save the first frame of the video here (s_0) instead of inside reset as user
             # may call env.reset(...) multiple times but we want to ignore empty trajectories
@@ -730,7 +725,11 @@ class RecordEpisodeZarr(gym.Wrapper):
             obs, rew, terminated, truncated, info = super().step(action)
 
         if self.save_trajectory:
-
+            if action_plan is not None:
+                assert action_plan.ndim == 3, f"action_plan must be of shape (num_envs, action_plan_length, action_dim), but got {action_plan.shape}"
+                assert action_plan.shape[0] == action.shape[0], f"action_plan and action must have the same number of environments, but got {action_plan.shape[0]} and {action.shape[0]}"
+                assert action_plan.shape[1] == self.action_plan_length, f"action_plan must have the same action plan length as the action plan length of the environment, but got {action_plan.shape[1]} and {self.action_plan_length}"
+                assert action_plan.shape[2] == action.shape[1], f"action_plan and action must have the same action dimension, but got {action_plan.shape[2]} and {action.shape[1]}"
             state_dict = self.base_env.get_state_dict()
             if self.record_env_state:
                 # self._trajectory_buffer.state = common.append_dict_array(
