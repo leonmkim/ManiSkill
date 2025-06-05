@@ -484,7 +484,7 @@ def unroll_delta_actions(delta_actions, init_pose, input_delta_rotation_represen
     '''
     assert translation_frame_convention in ['body', 'root'], f"translation_frame_convention {translation_frame_convention} not supported"
     assert rotation_frame_convention in ['body', 'root'], f"rotation_frame_convention {rotation_frame_convention} not supported"
-    assert input_delta_rotation_representation in ['axis_angle', 'quaternion'], f"input_delta_rotation_representation {input_delta_rotation_representation} not supported"
+    assert input_delta_rotation_representation in ['axis_angle', 'quaternion', 'euler_angles'], f"input_delta_rotation_representation {input_delta_rotation_representation} not supported"
     assert output_rotation_representation in ['axis_angle', 'quaternion', 'euler_angles'], f"output_rotation_representation {output_rotation_representation} not supported"
     assert len(init_pose.shape) == 2, f"init_pose shape {init_pose.shape} not supported"
     assert len(delta_actions.shape) == 3, f"delta_actions shape {delta_actions.shape} not supported"
@@ -508,6 +508,9 @@ def unroll_delta_actions(delta_actions, init_pose, input_delta_rotation_represen
     elif input_delta_rotation_representation == 'quaternion':
         assert delta_actions.shape[2] == 7, f"delta_actions shape {delta_actions.shape} not match with input_delta_rotation_representation {input_delta_rotation_representation}"
         gt_delta_quaternions = delta_actions[:, :, 3:7]
+    elif input_delta_rotation_representation == 'euler_angles':
+        assert delta_actions.shape[2] == 6, f"delta_actions shape {delta_actions.shape} not match with input_delta_rotation_representation {input_delta_rotation_representation}"
+        gt_delta_quaternions = transforms.matrix_to_quaternion(transforms.euler_angles_to_matrix(delta_actions[:, :, 3:6], convention='XYZ'))
     
     gt_target_rotations_in_current_pose = torch.zeros((B, N+1, 4), dtype=torch.float32, device=delta_actions.device)
     gt_target_rotations_in_current_pose[:, 0] = init_pose[:, 3:7]  # initial rotation is the same as the initial pose
