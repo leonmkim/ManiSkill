@@ -53,16 +53,35 @@ from agent.encoder import VisualFeatureSet
 from lerobot.common.policies.diffusion.configuration_diffusion import ActionConfig, ActionHistoryConfig
 from agent.encoder import MaskInputDict
 from dataset.expert_dataset import ExpertDatasetZarr
+#%%
+# path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
+# demo_name = "1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act"
+# path_to_demo_dir = path_to_demo_root_dir / demo_name
+# assert path_to_demo_dir.exists(), f"Path {path_to_demo_dir} does not exist. Please check the path."
 
+# path_to_zarr = path_to_demo_dir / "demos.zarr"
+# path_to_json = path_to_demo_dir / "demos.json"
+
+# assert path_to_zarr.exists(), f"Path {path_to_zarr} does not exist. Please check the path."
+# assert path_to_json.exists(), f"Path {path_to_json} does not exist. Please check the path."
+# zarr_dataset = zarr.open(str(path_to_zarr), mode='r+')
+#%%
 @click.command()
 @click.argument('episode-idx', type=int)
-def main(episode_idx):
+@click.argument('path-to-demo-root-dir', type=click.Path(exists=True, path_type=Path))
+@click.argument('demo-name', type=str)
+def main(episode_idx, path_to_demo_root_dir, demo_name):
     print(f"starting to process episode {episode_idx}...")
     device = 'cuda'
-    path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act")
+    assert path_to_demo_root_dir.exists(), f"Path {path_to_demo_root_dir} does not exist. Please check the path."
 
-    path_to_zarr = path_to_demo_root_dir / "demos.zarr"
-    path_to_json = path_to_demo_root_dir / "demos.json"
+    # path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
+    # demo_name = "1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act"
+    path_to_demo_dir = path_to_demo_root_dir / demo_name
+    assert path_to_demo_dir.exists(), f"Path {path_to_demo_dir} does not exist. Please check the path."
+
+    path_to_zarr = path_to_demo_dir / "demos.zarr"
+    path_to_json = path_to_demo_dir / "demos.json"
 
     assert path_to_zarr.exists(), f"Path {path_to_zarr} does not exist. Please check the path."
     assert path_to_json.exists(), f"Path {path_to_json} does not exist. Please check the path."
