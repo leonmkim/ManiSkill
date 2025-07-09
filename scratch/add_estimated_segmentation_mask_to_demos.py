@@ -103,17 +103,17 @@ def main(episode_idx, path_to_demo_root_dir, demo_name):
     length_randomization_bounds: [0.1, 0.15]
     '''
 
-    max_grasped_object_length_x = 0.15 + .01
-    max_grasped_object_width_y = 0.065 + .01
-    max_grasped_object_height_z = 0.25 + .01
+    max_grasped_object_length_x = 0.15 + .005
+    max_grasped_object_width_y = 0.065 + .005
+    max_grasped_object_height_z = 0.25 + .005
     mask_predictor = MaskPredictor(hf_pretrained_model_name=hf_pretrained_model_name, device=device, 
                                 max_grasped_object_length_x=max_grasped_object_length_x,
                                 max_grasped_object_width_y=max_grasped_object_width_y,
                                 max_grasped_object_height_z=max_grasped_object_height_z,)
     #%%
-    if sam2_options_string not in zarr_dataset['data']:
-        zarr_dataset.create_group('data/' + sam2_options_string)
-        print(f"Created group {sam2_options_string} in zarr dataset.")
+    # if sam2_options_string not in zarr_dataset['data']:
+    #     zarr_dataset.create_group('data/' + sam2_options_string)
+    #     print(f"Created group {sam2_options_string} in zarr dataset.")
     #%%
     # for episode_idx in episode_idxs:
     episode_data_group_name = f"episode_data/episode_{episode_idx}"
@@ -146,9 +146,9 @@ def main(episode_idx, path_to_demo_root_dir, demo_name):
                                         action_indices_same_as_indices=False,
                                         set_close_gripper_action_for_padding=True,
                                         include_target_pose_observations=True,
-                                        repeat_padding_for_actions=True,
-                                        action_using_env_state_indices=False,
-                                        stored_action_frame_expression='absolute',
+                                        # repeat_padding_for_actions=True,
+                                        # action_using_env_state_indices=False,
+                                        # stored_action_frame_expression='absolute',
                                         )
     dataloader = DataLoader(episode_dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
     #%%
