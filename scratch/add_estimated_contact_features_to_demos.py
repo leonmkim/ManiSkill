@@ -235,6 +235,20 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
     episode_data_env_normals_map_array_name = episode_data_contact_group_name + '/observation.env_normals_map'
 
     #%%
+    # check if already exists
+    episode_length = zarr_dataset['meta']['episode_ends'][episode_idx] - (0 if episode_idx == 0 else zarr_dataset['meta']['episode_ends'][episode_idx - 1])
+    if episode_data_contact_map_array_name in zarr_dataset:
+        episode_data_array_length = zarr_dataset[episode_data_contact_map_array_name].shape[0]
+        assert episode_data_array_length == zarr_dataset[episode_data_EE_dtc_map_array_name].shape[0] == zarr_dataset[episode_data_EE_normals_map_array_name].shape[0] == zarr_dataset[episode_data_env_dtc_map_array_name].shape[0] == zarr_dataset[episode_data_env_normals_map_array_name].shape[0], "All episode data arrays must have the same length."
+        # if exists then check if length matches episode length
+        if episode_data_array_length == episode_length:
+            print(f"Episode data arrays already exist for episode {episode_idx} and have the correct length {episode_length}. Skipping mask generation.")
+            return
+        else:
+            print(f"Episode data arrays already exist for episode {episode_idx} but have length {episode_data_array_length} which does not match episode length {episode_length}. Re-generating masks.")
+        
+
+    #%%
     mask_input_dict = MaskInputDict(enable=contact_estimation_model.contact_model_uses_mask, mask_list=['EE_obj_mask'], representation='channels', segmentation_model_name=segmentation_model_name)
     # mask_input_dict = MaskInputDict(enable=contact_estimation_model.contact_model_uses_mask, mask_list=['EE_obj_mask'], representation='channels', segmentation_model_name='gt_segmentation')
     observation_cfg = VisualFeatureSet(use_color=True, use_depth=True, mask_input_dict=mask_input_dict, use_contact_map=False, use_sdf_maps=False, use_normals_maps=False)
@@ -254,9 +268,9 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
                                         action_indices_same_as_indices=False,
                                         set_close_gripper_action_for_padding=True,
                                         include_target_pose_observations=True,
-                                        repeat_padding_for_actions=True,
-                                        action_using_env_state_indices=False,
-                                        stored_action_frame_expression='absolute',
+                                        # repeat_padding_for_actions=True,
+                                        # action_using_env_state_indices=False,
+                                        # stored_action_frame_expression='absolute',
                                         )
     dataloader = DataLoader(episode_dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
     #%%
