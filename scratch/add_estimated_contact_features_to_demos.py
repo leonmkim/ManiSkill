@@ -44,6 +44,10 @@ from agent.encoder import VisualFeatureSet
 from lerobot.common.policies.diffusion.configuration_diffusion import ActionConfig, ActionHistoryConfig
 from agent.encoder import MaskInputDict
 from dataset.expert_dataset import ExpertDatasetZarr
+# #%%
+path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
+path_to_zarr = path_to_demo_root_dir / "2_demo_test" / "demos.zarr"
+zarr_store = zarr.open(str(path_to_zarr), mode='r')
 #%%
 # path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
 # demo_name = "1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act"
@@ -320,7 +324,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
         if i == 0: #initialize cutie
             # mask = batch['observation.EE_obj_mask'][0,0,0].cpu().numpy()
             # mask = mask_predictor.start_mask_tracking_from_mask(color_image, mask)
-            contact_model_output_dict = contact_estimation_model.start_contact_prediction(depth_image, EE_pose, cam_tf_world, camera_K, grasped_obj_mask=mask)
+            contact_model_output_dict = contact_estimation_model.start_contact_prediction(depth_image, EE_pose, grasped_obj_mask=mask)
         else:
             # with torch.inference_mode(), torch.autocast(device, dtype=torch.bfloat16):
             #     out_obj_ids, out_mask_logits = sam2_online_predictor.track(color_image)

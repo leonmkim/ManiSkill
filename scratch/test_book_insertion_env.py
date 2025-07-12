@@ -28,11 +28,9 @@ import cv2
 import time
 
 from mani_skill.utils.teleoperation import SpacemouseInput
-#%%
-spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
+spacemouse_input = SpacemouseInput(sixd_mask=[0,0,0,0,0,0])
 desired_viewing_size = (256, 256)
 
-#%%
 ## testing book insertion task
 joint_stiffness = 100.0
 joint_damping = 2*np.sqrt(joint_stiffness)
@@ -78,9 +76,9 @@ env = gym.make(
         y_randomization_bounds=[-0.05, 0.05],
     ),
     # obs_mode="none",
-    # control_mode="pd_ee_target_delta_pose",
+    control_mode="pd_ee_target_delta_pose",
     # control_mode="pd_ee_pose",
-    control_mode="pd_ee_target_pose",
+    # control_mode="pd_ee_target_pose",
     # control_mode="pd_ee_target_delta_pose_unnormalized",
     # control_mode="pd_ee_delta_pose",
     sim_config=dict(
@@ -100,6 +98,8 @@ env = gym.make(
         shader_pack="minimal"
     )
 )
+#%%
+obs, info = env.reset(seed=0)
 #%%
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -131,7 +131,6 @@ world_tf_gripper[:3, :3] = R.from_quat(world_tf_gripper_posquat[3:], scalar_firs
 world_tf_gripper[:3, 3] = world_tf_gripper_posquat[:3]
 world_tf_gripper_rot = R.from_quat(world_tf_gripper_posquat[3:], scalar_first=True)
 #%%
-
 # transform box centers and orientations to world frame
 new_gripper_centers = (world_tf_gripper[:3, :3] @ gripper_centers.T).T + world_tf_gripper[:3, 3]
 
@@ -140,14 +139,13 @@ new_gripper_orientations = R.from_matrix(world_tf_gripper[:3, :3] @ gripper_orie
 new_gripper_centers_alt = world_tf_gripper_rot.apply(gripper_centers) + world_tf_gripper[:3, 3]
 new_gripper_orientations_alt = world_tf_gripper_rot*gripper_orientations
 #%%
-
 rerun_output_dir = Path("/mnt/crucialSSD/maniskill_evals/rerun_test")
 import datetime
 rerun_output_dir = rerun_output_dir / datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-env = RecordEpisodeRerun(
-    env,
-    output_dir=rerun_output_dir,
-)
+# env = RecordEpisodeRerun(
+#     env,
+#     output_dir=rerun_output_dir,
+# )
 # env = gym.make(
 #     # "LiftPegUpright-v1", 
 #     "SpringArticulationEnv-v0", 

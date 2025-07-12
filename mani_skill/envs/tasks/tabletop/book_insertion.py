@@ -560,7 +560,6 @@ class BookInsertionEnv(BaseEnv):
             self.table_scene = SimpleTableSceneBuilder(self)
             self.table_scene.build()
 
-
             # >>>>>>>>> for debugging
             # self.top_of_slot_viz_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="top_of_slot_viz_pose", body_type="kinematic")
             # self._hidden_objects.append(self.top_of_slot_viz_pose)
@@ -852,7 +851,6 @@ class BookInsertionEnv(BaseEnv):
                     self.right_book_end = Actor.merge(right_book_ends, "right_book_end")
                 self.add_to_state_dict_registry(self.left_book_end)
                 self.add_to_state_dict_registry(self.right_book_end)
-                    
 
             self.target_EE_pose = build_coordinate_frame(self.scene, axis_length=0.05, axis_radius=0.005, name="target_EE_pose", body_type="kinematic")
             self._hidden_objects.append(self.target_EE_pose)
@@ -912,7 +910,7 @@ class BookInsertionEnv(BaseEnv):
                 self.xy_slot_location[:, 1] = self.slot_config.y_randomization_bounds
             self.xy_slot_location[:, 0] = end_effector_pose[:, 0]
 
-            slot_width = self.grasped_book_sizes[:, 1] - self.slot_config.negative_tolerance
+            self.slot_width = self.grasped_book_sizes[:, 1] - self.slot_config.negative_tolerance
 
             quat = torch.tensor([0., 0, 0, 1]).repeat(b, 1)
             # compute the env book poses
@@ -921,10 +919,10 @@ class BookInsertionEnv(BaseEnv):
                 pos[:, 0] = self.xy_slot_location[:, 0] - self.env_book_sizes[:, j, 0]/2 + .15/2
                 pos[:, 2] = self.env_book_sizes[:, j, 2]/2 + .001
                 if j < self.slot_config.left_of_book_index:
-                    pos[:, 1] = self.xy_slot_location[:, 1] - ((slot_width/2) + self.env_book_sizes[:, j+1:self.slot_config.left_of_book_index, 1].sum(dim=1))
+                    pos[:, 1] = self.xy_slot_location[:, 1] - ((self.slot_width/2) + self.env_book_sizes[:, j+1:self.slot_config.left_of_book_index, 1].sum(dim=1))
                     pos[:, 1] += -self.env_book_sizes[:, j, 1]/2
                 else:
-                    pos[:, 1] = self.xy_slot_location[:, 1] + ((slot_width/2) + self.env_book_sizes[:, self.slot_config.left_of_book_index:j, 1].sum(dim=1))
+                    pos[:, 1] = self.xy_slot_location[:, 1] + ((self.slot_width/2) + self.env_book_sizes[:, self.slot_config.left_of_book_index:j, 1].sum(dim=1))
                     pos[:, 1] += self.env_book_sizes[:, j, 1]/2
 
                 self.env_books_list[j].set_pose(Pose.create_from_pq(pos, quat))
@@ -952,7 +950,6 @@ class BookInsertionEnv(BaseEnv):
                     right_book_end_pos[:, 1] += (self.book_end_sizes[1]/2 + self.book_ends_config.travel_limit + self.book_ends_config.wall_width/2)
                 self.right_book_end.set_pose(Pose.create_from_pq(right_book_end_pos, identity_quat))
 
-
             # target_EE_pose = self.agent.controller.get_state()['arm']['target_pose']
             self.target_EE_pose.set_pose(end_effector_pose)
 
@@ -968,7 +965,6 @@ class BookInsertionEnv(BaseEnv):
 
             self.elapsed_success_duration = torch.zeros(b)
             self.last_eval_bool = torch.zeros(b, dtype=torch.bool)
-            
             
     # def _after_simulation_step(self):
     #     # update viz poses
@@ -1180,6 +1176,22 @@ class BookInsertionEnv(BaseEnv):
             # set orientation to be identity (to world frame)
             pose = Pose.create_from_pq(p=pos)
         return pose
+    
+    @property
+    def grasped_book_info(self):
+        info_dict = dict()
+        info_dict['sizes'] = self.grasped_book_sizes # num_envs x 3
+        info_dict['color'] = self.grasped_book_colors # num_envs x 4
+        info_dict['mass'] = self.grasped_book.mass # num_envs
+        return info_dict
+
+    @property
+    def env_books_info(self):
+        info_dict = dict()
+        info_dict['sizes'] = self.env_book_sizes # num_envs x 8 x 3
+        info_dict['colors'] = self.env_book_colors # num_envs x 8 x 4
+        info_dict['masses'] = torch.stack([self.env_books_list[i].mass for i in range(8)]).transpose(1,0) # num_envs x 8
+        return info_dict
     
     @property
     def bottom_inner_corner_of_book_right_of_slot_pose(self):

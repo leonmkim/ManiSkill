@@ -27,9 +27,13 @@ from mani_skill.utils.teleoperation import SpacemouseInput
 
 import logging
 record_logger = logging.getLogger("record_logger")
+#%%
+path_to_demo = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250606_154009.zarr")
+import zarr
+demo = zarr.open(path_to_demo, mode='r')
 
 #%%
-# spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
+spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
 # spacemouse_input = SpacemouseInput(sixd_mask=[0,0,0,1,1,0])
 desired_viewing_size = (256, 256)
 output_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop")
@@ -80,8 +84,8 @@ env = gym.make(
         randomize_width=False,
     ),
     slot_config=SlotConfig(
-        # y_randomization_bounds=[-0.05, 0.05],
-        y_randomization_bounds=0.0,
+        y_randomization_bounds=[-0.05, 0.05],
+        # y_randomization_bounds=0.0,
     ),
     # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
@@ -115,6 +119,8 @@ if record_demonstrations:
         video_fps=20,
         source_type="teleoperation",
         source_desc="teleoperation via spacemouse",
+        save_grasped_book_info=True,
+        save_env_book_info=True,
     )
 seed = 0
 num_trajs = 0
@@ -149,9 +155,9 @@ obs, info = env.reset(seed=seed)
 # plt.imshow(frame)
 # plt.imshow(obs['sensor_data']['base_camera']['Color'][0][:,:,3].cpu().numpy())
 #%%
-# cv2.namedWindow("frame", cv2.WINDOW_AUTOSIZE)
-# frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
-# cv2.imshow("frame", frame)
+cv2.namedWindow("frame", cv2.WINDOW_AUTOSIZE)
+frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
+cv2.imshow("frame", frame)
 
 # frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
 # frame = (frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
@@ -165,14 +171,14 @@ obs, info = env.reset(seed=seed)
 #%%
 # frames = [env.render_rgb_array()[0].cpu().numpy()]
 # for i in tqdm.tqdm(range(500)):
-# while True:
-for i in range(1):
+while True:
+# for i in range(1):
     start_time = time.perf_counter()
-    # while True:
-    for j in range(25):
-        action = env.action_space.sample()
-        start_signal = None
-        # action, start_signal = spacemouse_input.get_action()
+    while True:
+    # for j in range(25):
+        # action = env.action_space.sample()
+        # start_signal = None
+        action, start_signal = spacemouse_input.get_action()
         obs, reward, terminated, truncated, info = env.step(action[np.newaxis, :], start_signal=start_signal)
 
         # env.render_human()
@@ -184,10 +190,10 @@ for i in range(1):
         # current_frame = (current_frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
         # current_frame = cv2.resize(current_frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
 
-        # cv2.imshow("frame", current_frame)
-        # key = cv2.waitKey(1) & 0xFF
-        # if key == ord('q') or key == ord('c') or key == ord('r'):
-        #     break
+        cv2.imshow("frame", current_frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q') or key == ord('c') or key == ord('r'):
+            break
         
         # if viewer.window.key_press('q'):
         #     # q: quit the script and stop collecting data. Save trajectories and optionally videos.
@@ -213,31 +219,31 @@ for i in range(1):
             record_logger.info(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
     
     if record_demonstrations:
-        pass
-        # if key == ord('q'):
-        #     num_trajs += 1
-        #     break
-        # elif key == ord('c'):
-        #     seed += 1
-        #     num_trajs += 1
-        #     env.reset(seed=seed)
-        #     record_logger.info(f"starting new episode with seed {seed}")
-        #     # viewer = env.render_human()
-        #     # spacemouse_input.reset()
-        #     continue
-        # elif key == ord('r'):
-        #     env.reset(seed=seed, options=dict(save_trajectory=False))
-        #     record_logger.info(f"restarting episode with seed {seed}")
-        #     # viewer = env.render_human()
-        #     # spacemouse_input.reset()
-        #     continue
+        # pass
+        if key == ord('q'):
+            num_trajs += 1
+            break
+        elif key == ord('c'):
+            seed += 1
+            num_trajs += 1
+            env.reset(seed=seed)
+            record_logger.info(f"starting new episode with seed {seed}")
+            # viewer = env.render_human()
+            spacemouse_input.reset()
+            continue
+        elif key == ord('r'):
+            env.reset(seed=seed, options=dict(save_trajectory=False))
+            record_logger.info(f"restarting episode with seed {seed}")
+            # viewer = env.render_human()
+            spacemouse_input.reset()
+            continue
     else:
         break
 
 cv2.destroyAllWindows()
-# if key == ord('q'):
-#     # dont save the trajectory
-#     env.reset(seed=seed, options=dict(save_trajectory=False))
+if key == ord('q'):
+    # dont save the trajectory
+    env.reset(seed=seed, options=dict(save_trajectory=False))
 #%%
 # if record_demonstrations:
 #     h5_file_path = env._h5_file.copy

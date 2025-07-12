@@ -37,6 +37,7 @@ from mani_skill.utils.wrappers import CPUGymWrapper
 
 from dataclasses import is_dataclass, asdict
 
+
 # NOTE (stao): The code for record.py is quite messy and perhaps confusing as it is trying to support both recording on CPU and GPU seamlessly
 # and handle partial resets. It works but can be claned up a lot.
 def recursive_dataclass_to_dict(obj):
@@ -284,8 +285,19 @@ class RecordEpisodeZarr(gym.Wrapper):
         eval_mode: bool = False,
         record_action_plan: bool = False,
         action_plan_length: Optional[int] = None,
+        save_grasped_book_info: bool = False,
+        save_env_book_info: bool = False,
+        record_action_history: bool = False,
+        action_history_length: Optional[int] = None,
+        record_generator_state: bool = False,
     ) -> None:
         super().__init__(env)
+        self.record_action_history = record_action_history
+        self.action_history_length = action_history_length
+        self.record_generator_state = record_generator_state
+
+        self.save_grasped_book_info = save_grasped_book_info
+        self.save_env_book_info = save_env_book_info
         self.record_action_plan = record_action_plan
         self.action_plan_length = action_plan_length
         self.current_env_seed = None
@@ -439,7 +451,7 @@ class RecordEpisodeZarr(gym.Wrapper):
         trajectory_root.create_group("data")
         return trajectory_root
     
-    def create_and_initialize_new_trajectory_buffer(self, obs, action, action_plan=None, env_state_dict=None):
+    def create_and_initialize_new_trajectory_buffer(self, obs, action, action_plan=None, env_state_dict=None, action_history=None, generator_state=None):
         trajectory_buffer = self.create_new_trajectory_buffer()
         data_group = trajectory_buffer["data"]
         meta_group = trajectory_buffer.create_group("meta")
@@ -473,6 +485,14 @@ class RecordEpisodeZarr(gym.Wrapper):
             action_plan_shape = action_plan.shape[2:] #TxBx(action dims)
             data_group.create_array('action_plan', shape=(0,) + (self.num_envs,) + action_plan_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + action_plan_shape, overwrite=True)#, compressor=self.zarr_compressor)
 
+        if action_history is not None:
+            action_history_shape = action_history.shape[-2:] #TxBx(action dims)
+            data_group.create_array('observation.action_history', shape=(0,) + (self.num_envs,) + action_history_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + action_history_shape, overwrite=True)#, compressor=self.zarr_compressor)
+        
+        if generator_state is not None:
+            generator_state_shape = generator_state.shape[-1:]
+            data_group.create_array('generator_state', shape=(0,) + (self.num_envs,) + generator_state_shape, dtype=np.uint8, chunks=(1,) + (self.num_envs,) + generator_state_shape, overwrite=True)#, compressor=self.zarr_compressor)
+
         if self.record_reward:
             data_group.create_array('reward', shape=(0,) + (self.num_envs,), dtype=np.float32, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
     
@@ -493,22 +513,41 @@ class RecordEpisodeZarr(gym.Wrapper):
         meta_group['episode_cam_K'].append(obs['sensor_param']['base_camera']['intrinsic_cv'])
 
         meta_group.create_array('episode_cam_tf_world', shape=(0,) + (self.num_envs,) + (4, 4), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (4, 4), overwrite=True)#, compressor=self.zarr_compressor)
-        cam_tf_world = obs['sensor_param']['base_camera']['extrinsic_cv'] # bxNx3x4 where N is number of cameras?
+        cam_tf_world = obs['sensor_param']['base_camera']['extrinsic_cv'] # bxnum_envsx3x4 
         # need to add the last row for the homogeneous coordinates
         cam_tf_world = np.concatenate([cam_tf_world, np.zeros((1, self.num_envs, 1, 4), dtype=np.float32)], axis=2)
         cam_tf_world[:, :, 3, 3] = 1.0
         meta_group['episode_cam_tf_world'].append(cam_tf_world)
+
+        if self.save_grasped_book_info:
+            grasped_book_info = self.env.grasped_book_info
+            meta_group.create_array('episode_grasped_book_sizes', shape=(0,) + (self.num_envs,) + (3,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (3,), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_grasped_book_sizes'].append(grasped_book_info['sizes'].unsqueeze(0).cpu().numpy())
+            meta_group.create_array('episode_grasped_book_color', shape=(0,) + (self.num_envs,) + (4,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (4,), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_grasped_book_color'].append(grasped_book_info['color'][np.newaxis, ...])
+            meta_group.create_array('episode_grasped_book_mass', shape=(0,) + (self.num_envs,), dtype=np.float32, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_grasped_book_mass'].append(grasped_book_info['mass'].unsqueeze(0).cpu().numpy())
+
+        if self.save_env_book_info:
+            env_books_info = self.env.env_books_info
+            num_env_books = len(self.env.env_books_list)
+            meta_group.create_array('episode_env_books_sizes', shape=(0,) + (self.num_envs,) + (num_env_books, 3), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (num_env_books, 3), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_env_books_sizes'].append(env_books_info['sizes'].unsqueeze(0).cpu().numpy())
+            meta_group.create_array('episode_env_books_colors', shape=(0,) + (self.num_envs,) + (num_env_books, 4), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (num_env_books, 4), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_env_books_colors'].append(env_books_info['colors'][np.newaxis, ...])
+            meta_group.create_array('episode_env_books_masses', shape=(0,) + (self.num_envs,) + (num_env_books,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (num_env_books,), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_env_books_masses'].append(env_books_info['masses'].unsqueeze(0).cpu().numpy())
 
         # meta_group.create_array('episode_start_idx', shape=(0,) + (self.num_envs,), dtype=np.int32, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
 
         if env_state_dict is not None:
             self.recursive_add_env_states_to_trajectory_buffer(data_group, env_state_dict)
 
-        self.add_to_existing_trajectory_buffer(trajectory_buffer, obs, action, action_plan=action_plan)
+        self.add_to_existing_trajectory_buffer(trajectory_buffer, obs, action, action_plan=action_plan, action_history=action_history, generator_state=generator_state)
 
         return trajectory_buffer
     
-    def add_to_existing_trajectory_buffer(self, trajectory_buffer, obs, action, action_plan=None, reward=None, terminated=None, truncated=None, done=None, success=None, fail=None, env_state_dict=None, start=None):
+    def add_to_existing_trajectory_buffer(self, trajectory_buffer, obs, action, action_plan=None, reward=None, terminated=None, truncated=None, done=None, success=None, fail=None, env_state_dict=None, start=None, action_history=None, generator_state=None):
         trajectory_buffer_data_group = trajectory_buffer['data']
         trajectory_buffer_meta_group = trajectory_buffer['meta']
 
@@ -536,6 +575,20 @@ class RecordEpisodeZarr(gym.Wrapper):
                 action_plan = np.full((1, self.num_envs, self.action_plan_length, action.shape[-1]), np.nan, dtype=np.float32)
             assert action_plan.ndim == 4, f"action_plan must have shape (1, num_envs, action_plan_length, action_dim), but got {action_plan.shape}"
             trajectory_buffer_data_group['action_plan'].append(action_plan)
+        
+        if self.record_action_history:
+            if action_history is None:
+                # fill with nans
+                action_history = np.full((1, self.num_envs, self.action_history_length, action.shape[-1]), np.nan, dtype=np.float32)
+            assert action_history.ndim == 4, f"action_history must have shape (1, num_envs, action_history_length, action_dim), but got {action_history.shape}"
+            trajectory_buffer_data_group['observation.action_history'].append(action_history)
+
+        if self.record_generator_state:
+            if generator_state is None:
+                # fill with nans
+                generator_state = np.full((1, 16), np.nan, dtype=np.uint8)
+            assert generator_state.ndim == 3, f"generator_state must have shape (1, 1, 16), but got {generator_state.shape}"
+            trajectory_buffer_data_group['generator_state'].append(generator_state)
 
         if env_state_dict is not None:
             self.recursive_add_env_states_to_trajectory_buffer(trajectory_buffer_data_group, env_state_dict)
@@ -590,6 +643,8 @@ class RecordEpisodeZarr(gym.Wrapper):
         *args,
         seed: Optional[Union[int, List[int]]] = None,
         options: Optional[dict] = dict(),
+        action_history = None,
+        generator_state = None,
         **kwargs,
     ):
 
@@ -624,6 +679,22 @@ class RecordEpisodeZarr(gym.Wrapper):
             action_plan = None
             if self.record_action_plan:
                 action_plan = action[:, np.newaxis, :].repeat(self.action_plan_length, axis=1)
+            
+            # action_history = None
+            if self.record_action_history:
+                if action_history is None:
+                    action_history = action[:, np.newaxis, :].repeat(self.action_history_length, axis=1)
+                assert action_history.ndim == 3, f"action_history must have shape (B, T, action_dim), but got {action_history.shape}"
+                assert action_history.shape[0] == self.num_envs, f"action_history must have shape (B, T, action_dim), but got {action_history.shape} and num_envs={self.num_envs}"
+                assert action_history.shape[1] == self.action_history_length, f"action_history must have shape (B, T, action_dim), but got {action_history.shape} and action_history_length={self.action_history_length}"
+            
+            # generator_state = None
+            if self.record_generator_state:
+                if generator_state is None:
+                    generator_state = np.zeros((16), dtype=np.uint8) # dummy generator state, can be replaced later
+                assert generator_state.ndim == 1, f"generator_state must have shape (16,), but got {generator_state.shape}"
+                assert generator_state.shape[0] == 16, f"generator_state must have shape (16,), but got {generator_state.shape}"
+
             # check if state_dict is consistent
             if not sapien_utils.is_state_dict_consistent(state_dict):
                 self.record_env_state = False
@@ -663,12 +734,27 @@ class RecordEpisodeZarr(gym.Wrapper):
             env_idx = np.arange(self.num_envs)
             if "env_idx" in options:
                 env_idx = common.to_numpy(options["env_idx"])
+            
+            if action_plan is not None:
+                action_plan = common.to_numpy(common.batch(action_plan.repeat(self.num_envs, 0)))
+            if action_history is not None:
+                if isinstance(action_history, torch.Tensor):
+                    action_history = action_history.cpu().numpy()
+                action_history = common.to_numpy(common.batch(action_history.repeat(self.num_envs, 0)))
+            if generator_state is not None:
+                generator_state = common.to_numpy(common.batch(common.batch(generator_state))) # add both time and batch dimensions
+
             if self._trajectory_buffer is None: # create and add to the trajectory buffer
                 # Initialize trajectory buffer on the first episode based on given observation (which should be generated after all wrappers)
                 # self._trajectory_buffer = first_step
-                if action_plan is not None:
-                    action_plan = common.to_numpy(common.batch(action_plan.repeat(self.num_envs, 0)))
-                self._trajectory_buffer = self.create_and_initialize_new_trajectory_buffer(common.to_numpy(common.batch(obs)), common.to_numpy(common.batch(action.repeat(self.num_envs, 0))), action_plan=action_plan, env_state_dict=state_dict)
+                # add the time dimension to everything
+                self._trajectory_buffer = self.create_and_initialize_new_trajectory_buffer(
+                    common.to_numpy(common.batch(obs)), 
+                    common.to_numpy(common.batch(action.repeat(self.num_envs, 0))), 
+                    action_plan=action_plan, 
+                    env_state_dict=state_dict, 
+                    action_history=action_history, 
+                    generator_state=generator_state)
             
             else: # add to the existing trajectory buffer
 
@@ -702,7 +788,13 @@ class RecordEpisodeZarr(gym.Wrapper):
                 #     )
                 # if self._trajectory_buffer.fail is not None:
                 #     recursive_replace(self._trajectory_buffer.fail, first_step.fail)
-                self.add_to_existing_trajectory_buffer(self._trajectory_buffer, common.to_numpy(common.batch(obs)), common.to_numpy(common.batch(action)), env_state_dict=state_dict)
+                self.add_to_existing_trajectory_buffer(self._trajectory_buffer, 
+                                                       common.to_numpy(common.batch(obs)), 
+                                                       common.to_numpy(common.batch(action)), 
+                                                       action_plan=action_plan, 
+                                                       env_state_dict=state_dict, 
+                                                       action_history=action_history, 
+                                                       generator_state=generator_state)
 
         if options is not None and "env_idx" in options:
             options["env_idx"] = common.to_numpy(options["env_idx"])
@@ -711,7 +803,7 @@ class RecordEpisodeZarr(gym.Wrapper):
             self.last_reset_kwargs.update(seed=seed)
         return obs, info
 
-    def step(self, action, action_plan=None, action_plan_rotation_representation=None, start_signal=None):
+    def step(self, action, action_plan=None, action_plan_rotation_representation=None, start_signal=None, action_history=None, generator_state=None):
         assert action.ndim == 2, f"action must be of shape (num_envs, action_dim), but got {action.shape}"
         if self.save_video and self._video_steps == 0:
             # save the first frame of the video here (s_0) instead of inside reset as user
@@ -798,6 +890,15 @@ class RecordEpisodeZarr(gym.Wrapper):
                 start_signal = common.to_numpy(common.batch(start_signal))
             if action_plan is not None:
                 action_plan = common.to_numpy(common.batch(action_plan))
+            if action_history is not None:
+                assert action_history.ndim == 3, f"action_history must be of shape (num_envs, action_history_length, action_dim), but got {action_history.shape}"
+                assert action_history.shape[0] == action.shape[0], f"action_history and action must have the same number of environments, but got {action_history.shape[0]} and {action.shape[0]}"
+                assert action_history.shape[1] == self.action_history_length, f"action_history must have the same action history length as the action history length of the environment, but got {action_history.shape[1]} and {self.action_history_length}"
+                action_history = common.to_numpy(common.batch(action_history))
+            if generator_state is not None:
+                assert generator_state.ndim == 1, f"generator_state must be of shape (16,), but got {generator_state.shape}"
+                assert generator_state.shape[0] == 16, f"generator_state must have 16 elements, but got {generator_state.shape[0]}"
+                generator_state = common.to_numpy(common.batch(common.batch(generator_state)))
             self.add_to_existing_trajectory_buffer(self._trajectory_buffer, 
                                                    common.to_numpy(common.batch(obs)), 
                                                    common.to_numpy(common.batch(action)), 
@@ -805,7 +906,9 @@ class RecordEpisodeZarr(gym.Wrapper):
                                                    reward=rew,
                                                    terminated=common.to_numpy(common.batch(terminated)), truncated=common.to_numpy(common.batch(truncated)), done=done, 
                                                    success=success, fail=fail, 
-                                                   env_state_dict=state_dict, start=start_signal
+                                                   env_state_dict=state_dict, start=start_signal,
+                                                   action_history=action_history,
+                                                   generator_state=generator_state,
                                                    )
 
         if self.save_video:
@@ -887,47 +990,6 @@ class RecordEpisodeZarr(gym.Wrapper):
                     self.meta_group.create_array('ep_ids', shape=(0,), dtype='S256', chunks=(1,), overwrite=True)
                 self.meta_group['ep_ids'].append(np.array([traj_id], dtype='S256'))
 
-                # def recursive_add_to_h5py(
-                #     group: h5py.Group, data: Union[dict, Array], key
-                # ):
-                #     """simple recursive data insertion for nested data structures into h5py, optimizing for visual data as well"""
-                #     if isinstance(data, dict):
-                #         subgrp = group.create_group(key, track_order=True)
-                #         for k in data.keys():
-                #             recursive_add_to_h5py(subgrp, data[k], k)
-                #     else:
-                #         if key == "rgb":
-                #             # NOTE(jigu): It is more efficient to use gzip than png for a sequence of images.
-                #             group.create_array(
-                #                 "rgb",
-                #                 data=data[start_ptr:end_ptr, env_idx],
-                #                 dtype=data.dtype,
-                #                 compression="gzip",
-                #                 compression_opts=5,
-                #             )
-                #         elif key == "depth":
-                #             # NOTE (stao): By default now cameras in ManiSkill return depth values of type uint16 for numpy
-                #             group.create_array(
-                #                 key,
-                #                 data=data[start_ptr:end_ptr, env_idx],
-                #                 dtype=data.dtype,
-                #                 compression="gzip",
-                #                 compression_opts=5,
-                #             )
-                #         elif key == "seg":
-                #             group.create_array(
-                #                 key,
-                #                 data=data[start_ptr:end_ptr, env_idx],
-                #                 dtype=data.dtype,
-                #                 compression="gzip",
-                #                 compression_opts=5,
-                #             )
-                #         else:
-                #             group.create_array(
-                #                 key,
-                #                 data=data[start_ptr:end_ptr, env_idx],
-                #                 dtype=data.dtype,
-                #             )
 
                 def recursive_copy_memory_store_to_disk(
                         data: Union[zarr.Group, zarr.Array], 
@@ -952,30 +1014,6 @@ class RecordEpisodeZarr(gym.Wrapper):
                     else:
                         raise ValueError(f"Data type {type(data)} not supported for recursive_copy_memory_store_to_disk")
 
-                # # Observations need special processing
-                # if isinstance(self._trajectory_buffer.observation, dict):
-                #     recursive_add_to_h5py(
-                #         group, self._trajectory_buffer.observation, "obs"
-                #     )
-                # elif isinstance(self._trajectory_buffer.observation, np.ndarray):
-                #     if self.cpu_wrapped_env:
-                #         group.create_array(
-                #             "obs",
-                #             data=self._trajectory_buffer.observation[start_ptr:end_ptr],
-                #             dtype=self._trajectory_buffer.observation.dtype,
-                #         )
-                #     else:
-                #         group.create_array(
-                #             "obs",
-                #             data=self._trajectory_buffer.observation[
-                #                 start_ptr:end_ptr, env_idx
-                #             ],
-                #             dtype=self._trajectory_buffer.observation.dtype,
-                #         )
-                # else:
-                #     raise NotImplementedError(
-                #         f"RecordEpisode wrapper does not know how to handle observation data of type {type(self._trajectory_buffer.observation)}"
-                #     )
                 episode_info = dict(
                     episode_id=self._episode_id,
                     episode_seed=self.base_env._episode_seed[env_idx],
@@ -1007,6 +1045,11 @@ class RecordEpisodeZarr(gym.Wrapper):
                 self._trajectory_buffer['data']['action'] = self._trajectory_buffer['data']['action'][start_ptr + 1 : end_ptr]
                 if self.record_action_plan:
                     self._trajectory_buffer['data']['action_plan'] = self._trajectory_buffer['data']['action_plan'][start_ptr + 1 : end_ptr]
+
+                if self.record_action_history:
+                    self._trajectory_buffer['data']['observation.action_history'] = self._trajectory_buffer['data']['observation.action_history'][start_ptr : end_ptr-1]
+                if self.record_generator_state:
+                    self._trajectory_buffer['data']['generator_state'] = self._trajectory_buffer['data']['generator_state'][start_ptr : end_ptr-1]
                 # terminated = self._trajectory_buffer.terminated[
                 #     start_ptr + 1 : end_ptr, env_idx
                 # ]
@@ -1107,11 +1150,34 @@ class RecordEpisodeZarr(gym.Wrapper):
 
                 if 'episode_cam_K' not in self.meta_group:
                     self.meta_group.create_array('episode_cam_K', shape=(0,) + (3, 3), dtype=np.float32, chunks=(1,) + (3, 3), overwrite=True)
-                self.meta_group['episode_cam_K'].append(self._trajectory_buffer['meta']['episode_cam_K'][env_idx])
+                self.meta_group['episode_cam_K'].append(self._trajectory_buffer['meta']['episode_cam_K'][:, env_idx]) # Txnum_envsx3x3
 
                 if 'episode_cam_tf_world' not in self.meta_group:
                     self.meta_group.create_array('episode_cam_tf_world', shape=(0,) + (4, 4), dtype=np.float32, chunks=(1,) + (4, 4), overwrite=True)
-                self.meta_group['episode_cam_tf_world'].append(self._trajectory_buffer['meta']['episode_cam_tf_world'][env_idx])
+                self.meta_group['episode_cam_tf_world'].append(self._trajectory_buffer['meta']['episode_cam_tf_world'][:, env_idx]) # Txnum_envsx4x4
+
+                if self.save_grasped_book_info:
+                    if 'episode_grasped_book_sizes' not in self.meta_group:
+                        self.meta_group.create_array('episode_grasped_book_sizes', shape=(0,) + (3,), dtype=np.float32, chunks=(1,) + (3,), overwrite=True)
+                    self.meta_group['episode_grasped_book_sizes'].append(self._trajectory_buffer['meta']['episode_grasped_book_sizes'][:, env_idx]) # Txnum_envsx3
+                    if 'episode_grasped_book_color' not in self.meta_group:
+                        self.meta_group.create_array('episode_grasped_book_color', shape=(0,) + (4,), dtype=np.float32, chunks=(1,) + (4,), overwrite=True)
+                    self.meta_group['episode_grasped_book_color'].append(self._trajectory_buffer['meta']['episode_grasped_book_color'][:, env_idx]) # Txnum_envsx3
+                    if 'episode_grasped_book_mass' not in self.meta_group:
+                        self.meta_group.create_array('episode_grasped_book_mass', shape=(0,), dtype=np.float32, chunks=(1,), overwrite=True)
+                    self.meta_group['episode_grasped_book_mass'].append(self._trajectory_buffer['meta']['episode_grasped_book_mass'][:, env_idx]) # Txnum_envsx1
+                    
+                if self.save_env_book_info:
+                    num_env_books = len(self.env.env_books_list)
+                    if 'episode_env_books_sizes' not in self.meta_group:
+                        self.meta_group.create_array('episode_env_books_sizes', shape=(0,) + (num_env_books, 3), dtype=np.float32, chunks=(1,) + (num_env_books, 3), overwrite=True)
+                    self.meta_group['episode_env_books_sizes'].append(self._trajectory_buffer['meta']['episode_env_books_sizes'][:, env_idx]) # Txnum_envsxnum_env_booksx3
+                    if 'episode_env_books_colors' not in self.meta_group:
+                        self.meta_group.create_array('episode_env_books_colors', shape=(0,) + (num_env_books, 4), dtype=np.float32, chunks=(1,) + (num_env_books, 3), overwrite=True)
+                    self.meta_group['episode_env_books_colors'].append(self._trajectory_buffer['meta']['episode_env_books_colors'][:, env_idx]) # Txnum_envsxnum_env_booksx3
+                    if 'episode_env_books_masses' not in self.meta_group:
+                        self.meta_group.create_array('episode_env_books_masses', shape=(0,) + (num_env_books,), dtype=np.float32, chunks=(1,) + (num_env_books,), overwrite=True)
+                    self.meta_group['episode_env_books_masses'].append(self._trajectory_buffer['meta']['episode_env_books_masses'][:, env_idx]) # Txnum_envsxnum_env_booksx1
 
                 # NOTE: done and env states are not trimmed
 

@@ -540,21 +540,18 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 # #################################################################################
 
 dataset_name = 'sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act'
-# dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
-dataset_root_dir = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1')
+dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
+# dataset_root_dir = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1')
 
-
-# demos_to_trim = [
-#     Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250509_162111.zarr'),
-#     # Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250508_201027.zarr'),
-# ]
-demos_to_trim = list()
+demos_to_trim = [
+    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250606_154553.zarr'),
+]
+# demos_to_trim = list()
 for demo_path in demos_to_trim:
     assert demo_path.exists()
     demo_path = demo_path.expanduser()
 
 #%%
-
 for path_to_demo in demos_to_trim:
     path_to_demo = path_to_demo.expanduser()
     demo = zarr.open(path_to_demo, mode='r+')
@@ -574,14 +571,16 @@ for path_to_demo in demos_to_trim:
 # ###########################
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_175948_trimmed.zarr')
-base_demo_path = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/700_sim_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act_copy/demos.zarr')
+# base_demo_path = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/700_sim_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act_copy/demos.zarr')
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250606_154553_trimmed.zarr')
+
 assert base_demo_path.exists()
 base_demo_path = base_demo_path.expanduser()
-demos_to_add_to_base_paths = [
-    Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/532_sim_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act/demos.zarr'),
-]
+# demos_to_add_to_base_paths = [
+#     Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/532_sim_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act/demos.zarr'),
+# ]
+demos_to_add_to_base_paths = list()
 
-# demos_to_add_to_base_paths = list()
 for demo_path in demos_to_add_to_base_paths:
     assert demo_path.exists()
     demo_path = demo_path.expanduser()

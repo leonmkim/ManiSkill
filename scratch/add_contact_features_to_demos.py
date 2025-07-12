@@ -80,7 +80,8 @@ def construct_env_state_dict(zarr_data, index):
 # # scene.show()
 #%%
 desired_viewing_size = (256, 256)
-path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/532_sim_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act")
+# path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/424_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act")
+path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/1_demo_test")
 
 path_to_zarr = path_to_demo_root_dir / "demos.zarr"
 path_to_json = path_to_demo_root_dir / "demos.json"
@@ -165,8 +166,8 @@ env = gym.make(
         randomize_width=False,
     ),
     slot_config=SlotConfig(
-        # y_randomization_bounds=[-0.05, 0.05],
-        y_randomization_bounds=0.0,
+        y_randomization_bounds=[-0.05, 0.05],
+        # y_randomization_bounds=0.0,
     ),
     # render_mode="sensors", 
     render_backend="gpu",
@@ -192,7 +193,6 @@ env = gym.make(
     )
 )
 #%%
-
 sim_dt = 1.0 / env.sim_config.sim_freq
 sim_dt_bw_step = sim_dt * (env.sim_config.sim_freq / env.sim_config.control_freq)
 
