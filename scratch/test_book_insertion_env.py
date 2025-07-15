@@ -28,7 +28,7 @@ import cv2
 import time
 
 from mani_skill.utils.teleoperation import SpacemouseInput
-spacemouse_input = SpacemouseInput(sixd_mask=[0,0,0,0,0,0])
+spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,1,1,1])
 desired_viewing_size = (256, 256)
 
 ## testing book insertion task
@@ -258,7 +258,8 @@ while True:
             time.sleep(time_to_sleep)
         if elapsed_timesteps % 50 == 0:
             print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
-            # print(f"success: {info['success']} | success duration: {info['elapsed_success_duration']} | t. success: {info['transient_success']} | z_distance: {info['z_distance_bw_top_of_grasped_book_and_top_of_slot']}")
+            print(f"success: {info['success']} | success duration: {info['elapsed_success_duration']} | t. success: {info['transient_success']} | z_distance: {info['z_distance_bw_top_of_grasped_book_and_top_of_slot']}")
+            print(f"grasped book is grasped: {info['grasped_book_is_possibly_grasped']}")
     
     if key == ord('q'):
         num_trajs += 1

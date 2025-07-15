@@ -24,6 +24,7 @@ import einops
 import trimesh as tm
 from scipy.spatial.transform import Rotation as R
 
+from pytorch3d import transforms
 import logging
 
 from pathlib import Path
@@ -1269,10 +1270,114 @@ class BookInsertionEnv(BaseEnv):
         return z_distance
 
     @property    
-    def grasped_book_is_grasped(self):
-        # check whether grasped_book is still in gripper
-        return self.agent.is_grasping(self.grasped_book)
+    def grasped_book_is_possibly_grasped(self):
+        # write our own function of whether the grasped book is still in the gripper by checking if two cuboids intersect
+        # cuboid one is defined as the volume in between the gripper fingers, and cuboid two is the grasped book
+        # return a torch boolean tensor of shape (num_envs,)
+        # following Stefan Gottschalk's implementation of OBB SAT https://gamma.cs.unc.edu/users/gottschalk/main.pdf
+        with torch.device(self.device):
+            # first do a quick but conservative check if cubes are NOT intersecting using the cirumscribed spheres
+            cuboid_A_dict = self.cuboid_between_gripper_fingers
+            cuboid_B_dict = self.grasped_book_cuboid
+            r_circumscribed_sphere_A = torch.linalg.norm(cuboid_A_dict['half_dims'], axis=1, ord=2, keepdim=True)
+            r_circumscribed_sphere_B = torch.linalg.norm(cuboid_B_dict['half_dims'], axis=1, ord=2, keepdim=True)
+            W_t_AB = cuboid_B_dict['center_pos'] - cuboid_A_dict['center_pos'] # bx3
+            center_distance = torch.linalg.norm(W_t_AB, axis=1, ord=2, keepdim=True)
+            # if distance is greater than the sum of the two spheres, then they are not intersecting
+            cuboids_are_not_intersecting = center_distance > (r_circumscribed_sphere_A + r_circumscribed_sphere_B)
+            if torch.all(cuboids_are_not_intersecting): # we can break early if ALL cuboids are not intersecting
+                return cuboids_are_not_intersecting.logical_not().squeeze(-1) # return a boolean tensor of shape (num_envs,)
+            
+            # otherwise, need to continue with a more precise check using Separating Axis Theorem (SAT)
+            A_R_B = torch.bmm(cuboid_A_dict['rotation_matrix'].transpose(1, 2), cuboid_B_dict['rotation_matrix']) # bx3x3
+            abs_A_R_B = torch.abs(A_R_B) # bx3x3
+
+            A_t_AB = torch.bmm(cuboid_A_dict['rotation_matrix'].transpose(1, 2), W_t_AB.unsqueeze(-1)).squeeze(-1) # bx3
+            abs_A_t_AB = torch.abs(A_t_AB) # bx3
+
+            # check the axes of A
+            for i in range(3):
+                ra = cuboid_A_dict['half_dims'][:, i:i+1] # bx1
+                rb = (cuboid_B_dict['half_dims']*abs_A_R_B[:, i]).sum(dim=1, keepdim=True) # bx1
+                cuboids_are_not_intersecting = torch.logical_or(cuboids_are_not_intersecting, abs_A_t_AB[:, i:i+1] > (ra + rb))
+                if torch.all(cuboids_are_not_intersecting):
+                    return cuboids_are_not_intersecting.logical_not().squeeze(-1)
+
+            # check the axes of B
+            abs_B_R_A = abs_A_R_B.transpose(1, 2) # bx3x3
+
+            B_t_AB = torch.bmm(cuboid_B_dict['rotation_matrix'].transpose(1, 2), W_t_AB.unsqueeze(-1)).squeeze(-1) # bx3
+            abs_B_t_AB = torch.abs(B_t_AB) # bx3
+
+            for i in range(3):
+                ra = cuboid_B_dict['half_dims'][:, i:i+1] # bx1
+                rb = (cuboid_A_dict['half_dims']*abs_B_R_A[:, i]).sum(dim=1, keepdim=True) # bx1
+                cuboids_are_not_intersecting = torch.logical_or(cuboids_are_not_intersecting, abs_B_t_AB[:, i:i+1] > (ra + rb))
+                if torch.all(cuboids_are_not_intersecting):
+                    return cuboids_are_not_intersecting.logical_not().squeeze(-1)
+
+            # check the axes of A x B
+            for i in range(3):
+                for j in range(3):
+                    # compute the axis as the cross product of the two rotation matrices
+                    axis = torch.cross(cuboid_A_dict['rotation_matrix'][:, :, i], cuboid_B_dict['rotation_matrix'][:, :, j], dim=1) # bx3
+                    # if the axis is zero, skip it
+                    axis_norm = torch.linalg.norm(axis, axis=1, ord=2, keepdim=True)
+                    if (axis_norm < 1e-6).all():
+                        continue
+                    # simplified SAT check for the axis 
+                    ra = (cuboid_A_dict['half_dims'][:, (i+1)%3] * abs_A_R_B[:, (i+2)%3, j] + 
+                          cuboid_A_dict['half_dims'][:, (i+2)%3] * abs_A_R_B[:, (i+1)%3, j])
+                    
+                    rb = (cuboid_B_dict['half_dims'][:, (j+1)%3] * abs_A_R_B[:, i, (j+2)%3] + 
+                          cuboid_B_dict['half_dims'][:, (j+2)%3] * abs_A_R_B[:, i, (j+1)%3])
+                    
+                    abs_axis_t_AB = torch.abs(A_t_AB[:, (i+2)%3] * A_R_B[:, (i+1)%3, j] -
+                                              A_t_AB[:, (i+1)%3] * A_R_B[:, (i+2)%3, j])
+                    cuboids_are_not_intersecting = torch.logical_or(cuboids_are_not_intersecting, abs_axis_t_AB > (ra + rb))
+                    if torch.all(cuboids_are_not_intersecting):
+                        return cuboids_are_not_intersecting.logical_not().squeeze(-1)
+
+            # if we reach here, then the cuboids are intersecting
+            return torch.logical_or(cuboids_are_not_intersecting, torch.zeros_like(cuboids_are_not_intersecting, dtype=torch.bool)).logical_not().squeeze(-1) # return a boolean tensor of shape (num_envs,) where True means the cuboids are intersecting
+
+            # check whether grasped_book is still in gripper
+            # return self.agent.is_grasping(self.grasped_book)
+
+    @property
+    def cuboid_between_gripper_fingers(self):
+        # returns the batched center position, three half-lenghts, and the rotation matrix of the cuboid between the gripper fingers
+        with torch.device(self.device):
+            # get the gripper pose
+            gripper_pose = self.agent.tcp.pose.raw_pose # bx7
+            # get the gripper width
+            gripper_width = self.gripper_width # bx1
+            # compute the cuboid between the gripper fingers
+            center_pos = gripper_pose[:, :3] # bx3
+            half_dims = torch.zeros((self.num_envs, 3), device=self.device)
+            half_dims[:, 0] = 0.009 #m
+            half_dims[:, 1] = gripper_width[:, 0]/2 # half the gripper width
+            half_dims[:, 2] = 0.009 #m
+            rotation_matrix = transforms.quaternion_to_matrix(gripper_pose[:, 3:]) # bx3x3
+        return {'center_pos': center_pos, 'half_dims': half_dims, 'rotation_matrix': rotation_matrix}
     
+    @property
+    def grasped_book_cuboid(self):
+        # returns the batched center position, three half-lenghts, and the rotation matrix of the grasped book cuboid
+        with torch.device(self.device):
+            # get the grasped book pose
+            grasped_book_pose = self.grasped_book.pose.raw_pose # bx7
+            # get the grasped book sizes
+            grasped_book_half_dims = self.grasped_book_sizes/2 # bx3
+            rotation_matrix = transforms.quaternion_to_matrix(grasped_book_pose[:, 3:]) # bx3x3
+        return {'center_pos': grasped_book_pose[:, :3], 'half_dims': grasped_book_half_dims, 'rotation_matrix': rotation_matrix}
+
+    @property
+    def gripper_width(self):
+        # returns the batched gripper width
+        with torch.device(self.device):
+            return self.agent.robot.get_qpos()[:, -2:].sum(axis=1, keepdim=True) # bx1
+        
     @property
     def grasped_book_pushing_book_right_of_slot(self):
         with torch.device(self.device):
@@ -1375,7 +1480,7 @@ class BookInsertionEnv(BaseEnv):
                 not_toppled=not_toppled,
                 top_within_slot=top_within_slot,
                 bottom_within_slot=bottom_within_slot,
-                # grasped_book_is_grasped=self.grasped_book_is_grasped,
+                grasped_book_is_possibly_grasped=self.grasped_book_is_possibly_grasped,
                 )
         else:
             return dict()
