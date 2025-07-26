@@ -48,3 +48,5 @@ htmlcov/
 scratch/**/*.mp4
 scratch/demos/*
 scratch/cfgs/*
+scratch/force_map_plots/*
+
