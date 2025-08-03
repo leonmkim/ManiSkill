@@ -54,15 +54,15 @@ zarr_store['meta'].attrs['max_demo_length'] = max_demo_length
 # estimated_model_group_name = 'sam2-hiera-base-plus'
 # mask_data_array_name = 'observation.EE_obj_mask'
 #%%
-estimated_model_group_name = 'dinov2_vitb14_reg_rescale_0.875'
+estimated_model_group_name = 'theia-base-patch16-224-cdiv_15x20'
 x_norm_patchtokens_array_name = 'observation.x_norm_patchtokens'
-x_norm_clstoken_array_name = 'observation.x_norm_clstoken'
-x_norm_regtokens_array_name = 'observation.x_norm_regtokens'
+# x_norm_clstoken_array_name = 'observation.x_norm_clstoken'
+# x_norm_regtokens_array_name = 'observation.x_norm_regtokens'
 data_array_names_list = [
     # mask_data_array_name,
     x_norm_patchtokens_array_name,
-    x_norm_clstoken_array_name,
-    x_norm_regtokens_array_name
+    # x_norm_clstoken_array_name,
+    # x_norm_regtokens_array_name
 ]
 
 #%%
@@ -133,9 +133,6 @@ if not all_episodes_complete:
     print("Not all episodes have complete data for all data arrays. Exiting.")
     exit(1)
 # %%
-# for data_array_name in data_array_names_list:
-#     assert episode_lengths.sum() == zarr_store['data'][gt_model_group_name][data_array_name].shape[0], "Total episode length does not match total mask length."
-#%%
 # move all episode data to a new group under data
 if estimated_model_group_name not in zarr_store['data']:
     zarr_store.create_group('data/' + estimated_model_group_name)

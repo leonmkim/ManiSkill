@@ -48,17 +48,17 @@ from lerobot.common.policies.diffusion.configuration_diffusion import ActionConf
 from agent.encoder import MaskInputDict
 from dataset.expert_dataset import ExpertDatasetZarr
 #%%
-path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
-demo_name = "1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act"
-path_to_demo_dir = path_to_demo_root_dir / demo_name
-assert path_to_demo_dir.exists(), f"Path {path_to_demo_dir} does not exist. Please check the path."
+# path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
+# demo_name = "1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act"
+# path_to_demo_dir = path_to_demo_root_dir / demo_name
+# assert path_to_demo_dir.exists(), f"Path {path_to_demo_dir} does not exist. Please check the path."
 
-path_to_zarr = path_to_demo_dir / "demos.zarr"
-path_to_json = path_to_demo_dir / "demos.json"
+# path_to_zarr = path_to_demo_dir / "demos.zarr"
+# path_to_json = path_to_demo_dir / "demos.json"
 
-assert path_to_zarr.exists(), f"Path {path_to_zarr} does not exist. Please check the path."
-assert path_to_json.exists(), f"Path {path_to_json} does not exist. Please check the path."
-zarr_dataset = zarr.open(str(path_to_zarr), mode='r+')
+# assert path_to_zarr.exists(), f"Path {path_to_zarr} does not exist. Please check the path."
+# assert path_to_json.exists(), f"Path {path_to_json} does not exist. Please check the path."
+# zarr_dataset = zarr.open(str(path_to_zarr), mode='r+')
 
 #%%
 @click.command()
@@ -73,6 +73,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, theia_model_string, desi
 # # demo_name = "1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act"
 # demo_name = "2_demo_test"
 # theia_model_string = 'theia-base-patch16-224-cdiv'
+# desired_theia_size = (15,20)
 # # theia_model_string = 'theia-base-patch16-224-cddsv'
 
     print(f"starting to process episode {episode_idx}...")
@@ -108,7 +109,6 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, theia_model_string, desi
     patch_size = theia_model.backbone.model.config.patch_size
     # patch_size = 16
     original_image_size = zarr_dataset['data']['observation.rgb'].shape[1:3]
-    desired_theia_size = (15,20)
     assert isinstance(desired_theia_size, tuple) and len(desired_theia_size) == 2, "desired_theia_size should be a tuple of two integers."
     # compute the rescale factor based on the original image size and desired theia size
     rescale_factor = (desired_theia_size[0] * patch_size) / original_image_size[0]
@@ -452,7 +452,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, theia_model_string, desi
             # full_resnet_output = full_resnet(inputs)
     #%%
     episode_end = zarr_dataset['meta']['episode_ends'][episode_idx]
-    episode_start = zarr_dataset['meta']['episode_starts'][episode_idx-1] if episode_idx > 0 else 0
+    episode_start = zarr_dataset['meta']['episode_ends'][episode_idx-1] if episode_idx > 0 else 0
     episode_length = episode_end - episode_start
     #%%
     # assert zarr_dataset[x_norm_patchtokens_array_name].shape[0] == zarr_dataset[x_norm_clstoken_array_name].shape[0] == zarr_dataset[x_norm_regtokens_array_name].shape[0], "The number of elements in the x_norm_patchtokens, x_norm_clstoken, and x_norm_regtokens arrays should be the same."
