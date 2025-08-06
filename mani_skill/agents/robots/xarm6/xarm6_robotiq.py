@@ -36,12 +36,12 @@ class XArm6Robotiq(BaseAgent):
         rest=Keyframe(
             qpos=np.array(
                 [
-                    1.56280772e-03,
-                    -1.10912404e00,
-                    -9.71343926e-02,
-                    1.52969832e-04,
-                    1.20606723e00,
-                    1.66234924e-03,
+                    0,
+                    0.22,
+                    -1.23,
+                    0,
+                    1.01,
+                    0,
                     0,
                     0,
                     0,
@@ -77,7 +77,7 @@ class XArm6Robotiq(BaseAgent):
             pose=sapien.Pose([0, 0, 0]),
         ),
         stretch_j6=Keyframe(
-            qpos=np.array([0, 0, 0, 0, 0, np.pi / 2]),
+            qpos=np.array([0, 0, 0, 0, 0, np.pi / 2, 0, 0, 0, 0, 0, 0]),
             pose=sapien.Pose([0, 0, 0]),
         ),
     )
@@ -214,7 +214,7 @@ class XArm6Robotiq(BaseAgent):
         # -------------------------------------------------------------------------- #
 
         # Define a passive controller config to simply "turn off" other joints from being controlled and set their properties (damping/friction) to 0.
-        # These joints are controlled passively by the mimic controller later on.
+        # These joints are not explicitly controlled, and are free to move as per surrounding forces.
         passive_finger_joint_names = [
             "left_inner_knuckle_joint",
             "right_inner_knuckle_joint",
@@ -231,6 +231,9 @@ class XArm6Robotiq(BaseAgent):
         finger_joint_names = ["left_outer_knuckle_joint", "right_outer_knuckle_joint"]
 
         # Use a mimic controller config to define one action to control both fingers
+        mimic_config = dict(
+            left_outer_knuckle_joint=dict(joint="right_outer_knuckle_joint", multiplier=1.0, offset=0.0),
+        )
         finger_mimic_pd_joint_pos = PDJointPosMimicControllerConfig(
             finger_joint_names,
             lower=None,
@@ -240,6 +243,7 @@ class XArm6Robotiq(BaseAgent):
             force_limit=self.gripper_force_limit,
             friction=self.gripper_friction,
             normalize_action=False,
+            mimic=mimic_config,
         )
 
         finger_mimic_pd_joint_delta_pos = PDJointPosMimicControllerConfig(
@@ -252,6 +256,7 @@ class XArm6Robotiq(BaseAgent):
             friction=self.gripper_friction,
             normalize_action=True,
             use_delta=True,
+            mimic=mimic_config,
         )
 
         controller_configs = dict(
@@ -403,9 +408,29 @@ class XArm6Robotiq(BaseAgent):
         )
         return torch.logical_and(lflag, rflag)
 
+    @staticmethod
+    def build_grasp_pose(approaching, closing, center):
+        """Build a grasp pose ()."""
+        assert np.abs(1 - np.linalg.norm(approaching)) < 1e-3
+        assert np.abs(1 - np.linalg.norm(closing)) < 1e-3
+        assert np.abs(approaching @ closing) <= 1e-3
+        ortho = np.cross(closing, approaching)
+        T = np.eye(4)
+        T[:3, :3] = np.stack([ortho, closing, approaching], axis=1)
+        T[:3, 3] = center
+        return sapien.Pose(T)
+
     def is_static(self, threshold: float = 0.2):
         qvel = self.robot.get_qvel()[..., :-6]
         return torch.max(torch.abs(qvel), 1)[0] <= threshold
+
+    @property
+    def tcp_pos(self):
+        return self.tcp.pose.p
+
+    @property
+    def tcp_pose(self):
+        return self.tcp.pose
 
 
 @register_agent(asset_download_ids=["xarm6"])

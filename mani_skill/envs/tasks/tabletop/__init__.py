@@ -19,3 +19,4 @@ from .pull_cube_tool import PullCubeToolEnv
 
 from .book_insertion import BookInsertionEnv
 from .simple_spring_articulation_test import SpringArticulationEnv
+from .stack_pyramid import StackPyramidEnv
