@@ -368,6 +368,7 @@ class BookInsertionEnv(BaseEnv):
     render_contact_map: bool = False
     render_dtc_maps: bool = False
     render_normals_maps: bool = False
+    render_contact_forces_map: bool = False
 
     max_extrinsic_contacts: int = 50 # for padding
 
@@ -991,11 +992,40 @@ class BookInsertionEnv(BaseEnv):
     
     def _get_obs_extra(self, info):
         extra = dict()
+
         # if 'contact' in self._obs_mode:
-        
-        if self.render_contact_map:
-            extra['extrinsic_contact_positions'] = self.get_extrinsic_contact_positions()
-            extra['extrinsic_contact_map'] = self.project_contact_positions_to_camera(extra['extrinsic_contact_positions'])
+        if self.render_contact_map or self.render_contact_forces_map:
+            with torch.device(self.device):
+                contact_data_dict = self.get_extrinsic_contact_data(return_contact_positions=True, return_contact_forces=self.render_contact_forces_map)
+                assert contact_data_dict['contact_positions'].shape[-1] == 3, "contact_positions must have shape bxNx3"
+                extra['extrinsic_contact_positions'] = contact_data_dict['contact_positions']
+                if self.render_contact_forces_map:
+                    assert contact_data_dict['contact_forces'].shape[-1] == 3, "contact_forces must have shape bxNx3"
+                    extra['extrinsic_contact_forces'] = contact_data_dict['contact_forces']
+                b, N, _ = contact_data_dict['contact_positions'].shape
+                contact_positions = contact_data_dict['contact_positions'][~torch.any(torch.isnan(contact_data_dict['contact_positions']), dim=2)].reshape(b, -1, 3)
+                b, N, _ = contact_positions.shape
+                if self.render_contact_map:
+                    contact_map = torch.zeros((b, self.camera_height, self.camera_width, 1), dtype=torch.float32)
+                if self.render_contact_forces_map:
+                    contact_forces_map = torch.zeros((b, self.camera_height, self.camera_width, 3), dtype=torch.float32)
+                if N > 0:
+                    contact_pixel_coordinates = self.batched_position_to_pixel_coordinates(contact_positions)
+                    contact_image_array_indices = self.pixel_coordinates_to_image_array_indices(contact_pixel_coordinates)
+
+                    if self.render_contact_map:
+                        contact_map[tuple(contact_image_array_indices.T)] = 1.0
+                    if self.render_contact_forces_map:
+                        contact_forces = contact_data_dict['contact_forces'][~torch.any(torch.isnan(contact_data_dict['contact_forces']), dim=2)].reshape(b, -1, 3)
+                        contact_forces_map[tuple(contact_image_array_indices.T)] = contact_forces
+                if self.render_contact_map:
+                    extra['extrinsic_contact_map'] = contact_map
+                if self.render_contact_forces_map:
+                    extra['extrinsic_contact_forces_map'] = contact_forces_map
+                    
+        # if self.render_contact_map:
+        #     extra['extrinsic_contact_positions'] = contact_data_dict['contact_positions']
+        #     extra['extrinsic_contact_map'] = self.pixel_coordinates_to_image_array_indices(extra['extrinsic_contact_positions'])
 
         if self.render_dtc_maps or self.render_normals_maps:
             extra.update(self.get_extra_contact_features(self.render_dtc_maps, self.render_normals_maps))
@@ -1074,7 +1104,11 @@ class BookInsertionEnv(BaseEnv):
         return extra_contact_features_dict
 
     def batched_position_to_pixel_coordinates(self, positions):
-        # positions: bxNx3
+        '''
+        positions: bxNx3
+        returns: projected_points (u,v): bxNx2
+        '''
+        assert positions.ndim == 3, "positions must have shape bxNx3"
         assert positions.shape[-1] == 3, "positions must have shape bxNx3"
         b, N, _ = positions.shape
         positions = einops.rearrange(positions, 'b n c -> (b n) c')
@@ -1094,37 +1128,56 @@ class BookInsertionEnv(BaseEnv):
     
         return projected_points
             
-    def project_contact_positions_to_camera(self, contact_positions):
+    def pixel_coordinates_to_image_array_indices(self, pixel_coordinates):
         # TODO extend to multiple envs
-        # contact_positions: bxNx3
+        '''
+        pixel_coordinates in format (u,v): bxNx2
+        returns: image_array_indices: bxHxWx1
+        '''
         # filter out nan rows
+        assert pixel_coordinates.ndim == 3, "pixel_coordinates must have shape bxNx2"
+        assert pixel_coordinates.shape[-1] == 2, "pixel_coordinates must have shape bxNx2"
         with torch.device(self.device):
-            b, N, _ = contact_positions.shape
-            contact_positions = contact_positions[~torch.any(torch.isnan(contact_positions), dim=2)].reshape(b, -1, 3)
-            b, N, _ = contact_positions.shape
-            contact_map = torch.zeros((b, self.camera_height, self.camera_width, 1), device=contact_positions.device)
-            # convert contact positions to camera frame
-            if N > 0:
-                projected_points = self.batched_position_to_pixel_coordinates(contact_positions)
-                
-                # swap u and v to match image coordinates
-                projected_points = projected_points[..., [1, 0]]
-                
-                # filter out points outside of image plane
-                valid_points = (projected_points[..., 0] >= 0) & (projected_points[..., 0] < self.camera_height) & (projected_points[..., 1] >= 0) & (projected_points[..., 1] < self.camera_width)
-                projected_points = projected_points[valid_points]
+            # swap u and v to match image coordinates
+            pixel_coordinates = pixel_coordinates[..., [1, 0]]
+            
+            # filter out points outside of image plane
+            valid_points = (pixel_coordinates[..., 0] >= 0) & (pixel_coordinates[..., 0] < self.camera_height) & (pixel_coordinates[..., 1] >= 0) & (pixel_coordinates[..., 1] < self.camera_width)
+            pixel_coordinates = pixel_coordinates[valid_points]
 
-                # add index for batch dimension
-                projected_points = torch.cat([torch.zeros((projected_points.shape[0], 1), device=projected_points.device, dtype=torch.int), projected_points], dim=1)
-                # index into contact_map and set valid points to 1
-                contact_map[tuple(projected_points.T)] = 1
-        return contact_map
+            # add index for batch dimension
+            pixel_coordinates = torch.cat([torch.zeros((pixel_coordinates.shape[0], 1), dtype=torch.int), pixel_coordinates], dim=1)
+        return pixel_coordinates
+    
+    # def contact_pixel_coordinates_to_contact_map(self, contact_pixel_coordinates):
+    #     # TODO extend to multiple envs
+    #     # contact_positions: bxNx3
+    #     # filter out nan rows
+    #     with torch.device(self.device):
+    #         b, N, _ = contact_pixel_coordinates.shape
+    #         contact_map = torch.zeros((b, self.camera_height, self.camera_width, 1), dtype=torch.float)
+    #         # convert contact positions to camera frame
+    #         if N > 0:
+    #             # filter out points outside of image plane
+    #             valid_points = (contact_pixel_coordinates[..., 0] >= 0) & (contact_pixel_coordinates[..., 0] < self.camera_height) & (contact_pixel_coordinates[..., 1] >= 0) & (contact_pixel_coordinates[..., 1] < self.camera_width)
+    #             contact_pixel_coordinates = contact_pixel_coordinates[valid_points]
 
-    def get_extrinsic_contact_positions(self):
+    #             # add index for batch dimension
+    #             contact_pixel_coordinates = torch.cat([torch.zeros((contact_pixel_coordinates.shape[0], 1), dtype=torch.int), contact_pixel_coordinates], dim=1)
+    #             # index into contact_map and set valid points to 1
+    #             contact_map[tuple(contact_pixel_coordinates.T)] = 1
+    #     return contact_map
+
+    def get_extrinsic_contact_data(self, return_contact_positions=False, return_contact_forces=False):
+        assert return_contact_positions or return_contact_forces, "Must return either contact positions or contact forces"
+        assert self.num_envs == 1, "Only supports single envs for now"
+        contact_data = dict()
         with torch.device(self.device):
-            assert self.num_envs == 1, "Only supports single envs for now"
             # TODO extend to multiple envs
-            contact_positions = torch.nan*torch.ones((1, self.max_extrinsic_contacts, 3))
+            if return_contact_positions:
+                contact_positions = torch.nan*torch.ones((1, self.max_extrinsic_contacts, 3), device=self.device)
+            if return_contact_forces:
+                contact_forces = torch.nan*torch.ones((1, self.max_extrinsic_contacts, 3), device=self.device)
             contacts = self.scene.get_contacts()
             filtered_contacts = list()
             # filter contacts to only include contacts between grasped_book
@@ -1142,12 +1195,24 @@ class BookInsertionEnv(BaseEnv):
                 for contact in contacts:
                     for contact_point in contact.points:
                         if np.linalg.norm(contact_point.impulse) > 0:
-                            contact_positions[0, contact_idx] = torch.from_numpy(contact_point.position)
+                            if return_contact_forces:
+                                contact_forces[0, contact_idx] = torch.from_numpy(contact_point.impulse)
+                                # switch direction if grasped_book is the second body
+                                # body_name_0 = contact.bodies[0].entity.name
+                                body_name_1 = contact.bodies[1].entity.name
+                                if 'grasped_book' in body_name_1:
+                                    contact_forces[0, contact_idx] *= -1
+                            if return_contact_positions:
+                                contact_positions[0, contact_idx] = torch.from_numpy(contact_point.position)
                             contact_idx += 1
                             # torch.from_numpy(contact_point.position)
                     # contact_positions.extend([torch.from_numpy(contact_point.position) for contact_point in contact.points])
-            return contact_positions # bxNx3
-    
+            if return_contact_forces:
+                contact_data['contact_forces'] = contact_forces
+            if return_contact_positions:
+                contact_data['contact_positions'] = contact_positions
+            return contact_data
+
     # compute boolean task stages for reward computation
     # first stage: reach to the book
     # def reach_to_book(self):
