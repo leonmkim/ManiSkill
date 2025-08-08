@@ -12,6 +12,7 @@ except ImportError:
     raise ImportError(
         "pytorch_kinematics_ms not installed. Install with pip install pytorch_kinematics_ms"
     )
+import numpy as np
 import torch
 from lxml import etree as ET
 from sapien.wrapper.pinocchio_model import PinocchioModel
@@ -179,6 +180,30 @@ class Kinematics:
             len(self.active_ancestor_joints), dtype=bool, device=self.device
         )
         self.qmask[self.controlled_joints_idx_in_qmask] = 1
+    
+    def get_link_jacobian(
+            self, qpos: torch.Tensor, link_name: str
+    ) -> torch.Tensor:
+        """Get the Jacobian of a link in the articulation.
+
+        Args:
+            qpos (torch.Tensor, BXQ): joint positions of the articulation
+            link_name (str): name of the link to get the Jacobian for
+
+        Returns:
+            torch.Tensor: Jacobian of the link in shape (B, 6, num_active_joints)
+        """
+        if self.use_gpu_ik:
+            raise NotImplementedError(
+                "GPU IK not yet supported to get jacobian. Use CPU IK instead."
+            )
+        else:
+            B = qpos.shape[0]
+            assert B == 1, "Only single batch size supported for CPU IK"
+            link_index = self.articulation.links_map[link_name].index
+            return torch.tensor(self.pmodel.compute_single_link_local_jacobian(
+                qpos.T.cpu().numpy(), link_index
+            ).astype(np.float32)).unsqueeze(0)
 
     def compute_ik(
         self,

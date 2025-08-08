@@ -1,5 +1,6 @@
 from copy import deepcopy
 
+import einops
 import numpy as np
 import sapien
 import sapien.physx as physx
@@ -12,6 +13,7 @@ from mani_skill.agents.registration import register_agent
 from mani_skill.utils import common, sapien_utils
 from mani_skill.utils.structs.actor import Actor
 
+from pytorch3d import transforms
 
 @register_agent()
 class Panda(BaseAgent):
@@ -308,6 +310,41 @@ class Panda(BaseAgent):
         T[:3, :3] = np.stack([ortho, closing, approaching], axis=1)
         T[:3, 3] = center
         return sapien.Pose(T)
+    
+    def get_external_wrench_at_end_effector(self, in_world_frame=True):
+        """Get the external wrench at the end effector.
+
+        Args:
+            in_world_frame (bool): If True, return the wrench in world frame.
+                Otherwise, return the wrench in end effector frame.
+        """
+        kinematics_model = self.controller.controllers["arm"].kinematics
+        O_J_EE_T = einops.rearrange(kinematics_model.get_link_jacobian(
+            self.robot.get_qpos(), kinematics_model.end_link.name
+        ), 'b j c -> b c j')  # Bx6x9
+        joint_torques = self.get_external_joint_torques() # Bx9
+        EE_FT_EE = torch.linalg.lstsq(
+            O_J_EE_T, joint_torques.unsqueeze(-1)
+        ).solution.squeeze(-1)  # Bx6
+        if in_world_frame:
+            end_effector_pose = self.tcp.pose.raw_pose
+            W_FT_EE = torch.zeros_like(EE_FT_EE)
+            W_FT_EE[..., :3] = transforms.quaternion_apply(
+                end_effector_pose[:, 3:], EE_FT_EE[..., :3]
+            )
+            W_FT_EE[..., 3:] = transforms.quaternion_apply(
+                end_effector_pose[:, 3:], EE_FT_EE[..., 3:]
+            )
+            return W_FT_EE
+        else:
+            return EE_FT_EE
+            
+        
+    def get_external_joint_torques(self):
+        """Get the external joint torques."""
+        joint_spatial_forces = self.robot.get_link_incoming_joint_forces() # bxqx6
+        return joint_spatial_forces[:, 1:1+len(self.robot.active_joints), 3] # bxq
+
 
     # sensor_configs = [
     #     CameraConfig(

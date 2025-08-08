@@ -1035,6 +1035,9 @@ class BookInsertionEnv(BaseEnv):
 
         extra['end_effector_pose'] = end_effector_pose
 
+        W_FT_EE = self.agent.get_external_wrench_at_end_effector(in_world_frame=True)
+        extra['W_FT_EE'] = W_FT_EE
+
         # get end_effector pixel coordinates
         extra['end_effector_pixel_coordinates'] = self.batched_position_to_pixel_coordinates(end_effector_pose[:, :3].unsqueeze(1)).squeeze(1)
 
