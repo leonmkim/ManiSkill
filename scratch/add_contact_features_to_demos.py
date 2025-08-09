@@ -81,21 +81,93 @@ def construct_env_state_dict(zarr_data, index):
 #%%
 desired_viewing_size = (256, 256)
 # path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/424_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act")
-path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/1_demo_test")
+# path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/1_demo_test")
+path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/2_demo_test")
 
 path_to_zarr = path_to_demo_root_dir / "demos.zarr"
 path_to_json = path_to_demo_root_dir / "demos.json"
 
 snap_to_env_state = True
-record_contact_features = True
+record_contact_features = False
+record_extrinsic_contact_forces_maps = True
+record_external_end_effector_wrench = True
+max_num_contact = 50
 #%%
 zarr_store = zarr.open(str(path_to_zarr), mode='r+')
 with open(path_to_json, 'r') as f:
     json_data = json.load(f)
 #%%
+# episode_idx = 0
+# # save plots to directory
+# output_dir = Path("./force_map_plots")
+# output_dir.mkdir(parents=True, exist_ok=True)
+# cam_tf_world = torch.tensor(zarr_store['meta']['episode_cam_tf_world'][episode_idx])
+# cam_rot_world = cam_tf_world[:3, :3] #bx3x3
+# import einops
+# episode_start = zarr_store['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
+# episode_end = zarr_store['meta']['episode_ends'][episode_idx]
+# for i in range(episode_start, episode_end):
+#     rgb_image = zarr_store['data']['observation.rgb'][i]
+#     contact_forces_map = torch.tensor(zarr_store['data']['gt_contact']['observation.contact_forces_map'][i]) #bxHxWx3
+#     # transform the forces into camera frame
+#     # contact_forces_map_cam = torch.cat([
+#     #     contact_forces_map,
+#     #     torch.ones_like(contact_forces_map[..., :1], device=contact_forces_map.device, dtype=contact_forces_map.dtype)
+#     # ], dim=-1) # bxHxWx4
+#     h, w, c = contact_forces_map.shape
+#     contact_forces_map = einops.rearrange(contact_forces_map, 'h w c -> (h w) c')
+#     contact_forces_map = einops.rearrange(torch.matmul(cam_rot_world, contact_forces_map.unsqueeze(-1)).squeeze(-1) , '(h w) c -> h w c', h=h, w=w, c=c) # bxHxWx3
+#     # ignore the last dimension which points into the optical axis
+#     contact_forces_map_cam = contact_forces_map[..., :2]
+#     # scale newtons into meters
+#     contact_forces_map_cam = contact_forces_map_cam * (1.0 / 0.1)
+#     # plot using quiver
+#     fig, ax = plt.subplots(figsize=(20, 20))
+#     ax.imshow(rgb_image)
+#     # plot the contact forces using quiver
+#     y, x = np.mgrid[0:h, 0:w]
+#     # scale the forces to fit into the image
+#     scale = 100.0
+#     ax.quiver(x, y, contact_forces_map_cam[..., 0].cpu().numpy() * scale, 
+#             contact_forces_map_cam[..., 1].cpu().numpy() * scale, 
+#             angles='xy', scale_units='xy', scale=1, color='b')
+#     # save the figure
+#     fig.savefig(output_dir / f"force_map_{i:03d}.png")
+#     plt.close(fig)
+# #%%
+# # read the saved images and create a video
+# images_for_video = []
+# for i in range(episode_start, episode_end):
+#     img_path = output_dir / f"force_map_{i:03d}.png"
+#     img = plt.imread(img_path)
+#     images_for_video.append(img)
+
+# images_to_video(
+#     images_for_video,
+#     output_dir=output_dir,
+#     video_name="force_map_quiver_video",
+#     fps=20,
+#     quality=10,
+# )
+# #%%
+# force_torques = zarr_data['observation.end_effector_external_wrench_in_world'][episode_start:episode_end]
+# plt.figure(figsize=(10, 10))
+# plt.subplot(2, 1, 1)
+# plt.xlim(63,72)
+# plt.plot(force_torques[:, :3])
+# plt.title("External Force at End Effector in World Frame")
+# plt.legend(['Fx', 'Fy', 'Fz'])
+# plt.subplot(2, 1, 2)
+# plt.xlim(63,72)
+# plt.plot(force_torques[:, 3:])
+# plt.title("External Torque at End Effector in World Frame")
+# plt.legend(['Tx', 'Ty', 'Tz'])
+#%%
+keys_to_check = list()
 compressors = zarr_store['data']['observation.rgb'].compressors[0]
 # create the datasets for contact features if they don't exist
 image_shape = zarr_store['data']['observation.rgb'].shape[1:3]
+zarr_data = zarr_store['data']
 zarr_gt_contact = zarr_store['data']['gt_contact']
 if record_contact_features:
     # if 'observation.EE_dtc_map' not in zarr_gt_contact:
@@ -106,6 +178,20 @@ if record_contact_features:
     zarr_gt_contact.create_array('observation.env_dtc_map', shape=(0,) + image_shape + (1,), chunks=(1,) + image_shape + (1,), dtype=np.float32, compressor=compressors, overwrite=True)
     # if 'observation.env_normals_map' not in zarr_gt_contact:
     zarr_gt_contact.create_array('observation.env_normals_map', shape=(0,) + image_shape + (3,), chunks=(1,) + image_shape + (3,), dtype=np.float32, compressor=compressors, overwrite=True)
+    keys_to_check.append('gt_contact/observation.EE_dtc_map')
+    keys_to_check.append('gt_contact/observation.EE_normals_map')
+    keys_to_check.append('gt_contact/observation.env_dtc_map')
+    keys_to_check.append('gt_contact/observation.env_normals_map')
+
+if record_extrinsic_contact_forces_maps:
+    zarr_gt_contact.create_array('observation.contact_forces_map', shape=(0,) + image_shape + (3,), chunks=(1,) + image_shape + (3,), dtype=np.float32, compressor=compressors, overwrite=True)
+    zarr_gt_contact.create_array('observation.contact_forces', shape=(0,) + (max_num_contact, 3), chunks=(1,) + (max_num_contact, 3), dtype=np.float32, compressor=compressors, overwrite=True)
+    keys_to_check.append('gt_contact/observation.contact_forces_map')
+    keys_to_check.append('gt_contact/observation.contact_forces')
+
+if record_external_end_effector_wrench:
+    zarr_data.create_array('observation.end_effector_external_wrench_in_world', shape=(0, 6), chunks=(1, 6), dtype=np.float32, compressor=compressors, overwrite=True)
+    keys_to_check.append('observation.end_effector_external_wrench_in_world')
 #%%
 # for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), total=len(json_data['episodes'])):
 # # episode_idx = 100
@@ -171,7 +257,7 @@ env = gym.make(
     ),
     # render_mode="sensors", 
     render_backend="gpu",
-    obs_mode="rgb+depth+segmentation",
+    obs_mode="rgb",
     # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
     # control_mode="pd_ee_delta_pose",
@@ -229,6 +315,26 @@ for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), tot
         zarr_gt_contact['observation.env_normals_map'].append(contact_features_dict['env_normals_map'].cpu().numpy())
         zarr_gt_contact['observation.EE_dtc_map'].append(contact_features_dict['EE_dtc_map'].cpu().numpy())
         zarr_gt_contact['observation.EE_normals_map'].append(contact_features_dict['EE_normals_map'].cpu().numpy())
+    
+    if record_extrinsic_contact_forces_maps:
+        contact_map_data = env.get_extrinsic_contact_map_data(return_contact_positions_map=False, return_contact_forces_map=True)
+        assert contact_map_data['extrinsic_contact_forces_map'].ndim == 4, f"expected extrinsic_contact_forces_map to have shape (B, H, W, 3), got {contact_map_data['extrinsic_contact_forces_map'].shape}"
+        assert contact_map_data['extrinsic_contact_forces_map'].shape[0] == 1, f"expected extrinsic_contact_forces_map to have shape (1, H, W, 3), got {contact_map_data['extrinsic_contact_forces_map'].shape}"
+        assert contact_map_data['extrinsic_contact_forces_map'].shape[1:3] == image_shape, f"expected extrinsic_contact_forces_map to have shape (1, {image_shape[0]}, {image_shape[1]}, 3), got {contact_map_data['extrinsic_contact_forces_map'].shape}"
+        assert contact_map_data['extrinsic_contact_forces_map'].shape[3] == 3, f"expected extrinsic_contact_forces_map to have shape (1, H, W, 3), got {contact_map_data['extrinsic_contact_forces_map'].shape}"
+        zarr_gt_contact['observation.contact_forces_map'].append(contact_map_data['extrinsic_contact_forces_map'].cpu().numpy())
+
+        assert contact_map_data['extrinsic_contact_forces'].ndim == 3, f"expected extrinsic_contact_forces to have shape (B, N, 3), got {contact_map_data['extrinsic_contact_forces'].shape}"
+        assert contact_map_data['extrinsic_contact_forces'].shape[0] == 1, f"expected extrinsic_contact_forces to have shape (1, N, 3), got {contact_map_data['extrinsic_contact_forces'].shape}"
+        assert contact_map_data['extrinsic_contact_forces'].shape[1] <= max_num_contact, f"expected extrinsic_contact_forces to have shape (1, N, 3) with N <= {max_num_contact}, got {contact_map_data['extrinsic_contact_forces'].shape}"
+        zarr_gt_contact['observation.contact_forces'].append(contact_map_data['extrinsic_contact_forces'].cpu().numpy())
+
+    if record_external_end_effector_wrench:
+        W_FT_EE = env.agent.get_external_wrench_at_end_effector(in_world_frame=True)
+        assert W_FT_EE.ndim == 2, f"expected W_FT_EE to have shape (B, 6), got {W_FT_EE.shape}"
+        assert W_FT_EE.shape[0] == 1, f"expected W_FT_EE to have shape (1, 6), got {W_FT_EE.shape}"
+        assert W_FT_EE.shape[1] == 6, f"expected W_FT_EE to have shape (1, 6), got {W_FT_EE.shape}"
+        zarr_data['observation.end_effector_external_wrench_in_world'].append(W_FT_EE.cpu().numpy())
 
     #%%
     start_time = time.perf_counter()
@@ -241,7 +347,6 @@ for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), tot
             current_env_state_dict = construct_env_state_dict(zarr_store['data'], env_state_episode_start_idx + i + 1)
             env.set_state_dict(current_env_state_dict)
 
-
         # don't save if its the last step
         if i < num_steps - 1:
             #%%
@@ -253,6 +358,25 @@ for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), tot
                 zarr_gt_contact['observation.EE_dtc_map'].append(contact_features_dict['EE_dtc_map'].cpu().numpy())
                 zarr_gt_contact['observation.EE_normals_map'].append(contact_features_dict['EE_normals_map'].cpu().numpy())
 
+            if record_extrinsic_contact_forces_maps:
+                contact_map_data = env.get_extrinsic_contact_map_data(return_contact_positions_map=False, return_contact_forces_map=True)
+                assert contact_map_data['extrinsic_contact_forces_map'].ndim == 4, f"expected extrinsic_contact_forces_map to have shape (B, H, W, 3), got {contact_map_data['extrinsic_contact_forces_map'].shape}"
+                assert contact_map_data['extrinsic_contact_forces_map'].shape[0] == 1, f"expected extrinsic_contact_forces_map to have shape (1, H, W, 3), got {contact_map_data['extrinsic_contact_forces_map'].shape}"
+                assert contact_map_data['extrinsic_contact_forces_map'].shape[1:3] == image_shape, f"expected extrinsic_contact_forces_map to have shape (1, {image_shape[0]}, {image_shape[1]}, 3), got {contact_map_data['extrinsic_contact_forces_map'].shape}"
+                assert contact_map_data['extrinsic_contact_forces_map'].shape[3] == 3, f"expected extrinsic_contact_forces_map to have shape (1, H, W, 3), got {contact_map_data['extrinsic_contact_forces_map'].shape}"
+                zarr_gt_contact['observation.contact_forces_map'].append(contact_map_data['extrinsic_contact_forces_map'].cpu().numpy())
+
+                assert contact_map_data['extrinsic_contact_forces'].ndim == 3, f"expected extrinsic_contact_forces to have shape (B, N, 3), got {contact_map_data['extrinsic_contact_forces'].shape}"
+                assert contact_map_data['extrinsic_contact_forces'].shape[0] == 1, f"expected extrinsic_contact_forces to have shape (1, N, 3), got {contact_map_data['extrinsic_contact_forces'].shape}"
+                assert contact_map_data['extrinsic_contact_forces'].shape[1] <= max_num_contact, f"expected extrinsic_contact_forces to have shape (1, N, 3) with N <= {max_num_contact}, got {contact_map_data['extrinsic_contact_forces'].shape}"
+                zarr_gt_contact['observation.contact_forces'].append(contact_map_data['extrinsic_contact_forces'].cpu().numpy())
+
+            if record_external_end_effector_wrench:
+                W_FT_EE = env.agent.get_external_wrench_at_end_effector(in_world_frame=True)
+                assert W_FT_EE.ndim == 2, f"expected W_FT_EE to have shape (B, 6), got {W_FT_EE.shape}"
+                assert W_FT_EE.shape[0] == 1, f"expected W_FT_EE to have shape (1, 6), got {W_FT_EE.shape}"
+                assert W_FT_EE.shape[1] == 6, f"expected W_FT_EE to have shape (1, 6), got {W_FT_EE.shape}"
+                zarr_data['observation.end_effector_external_wrench_in_world'].append(W_FT_EE.cpu().numpy())
 
         # frames.append(current_frame)
         elapsed_timesteps = info["elapsed_steps"].item()
@@ -264,7 +388,12 @@ for episode_idx, episode_dict in tqdm.tqdm(enumerate(json_data['episodes']), tot
         #     time.sleep(time_to_sleep)
         if elapsed_timesteps % 50 == 0:
             print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
-    assert zarr_gt_contact['observation.env_dtc_map'].shape[0] == episode_end_idx, f"mismatch in number of contact features: {zarr_gt_contact['observation.env_dtc_map'].shape[0]} vs {episode_end_idx}"
+    
+    # assert zarr_gt_contact['observation.env_dtc_map'].shape[0] == episode_end_idx, f"mismatch in number of contact features: {zarr_gt_contact['observation.env_dtc_map'].shape[0]} vs {episode_end_idx}"
+
+    for key in keys_to_check:
+        assert key in zarr_data, f"key {key} not found in zarr_data"
+        assert zarr_data[key].shape[0] == episode_end_idx, f"mismatch in number of contact features for {key}: {zarr_data[key].shape[0]} vs {episode_end_idx}"
     #%%
     # if key == ord('q'):
     #     break

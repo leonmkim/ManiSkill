@@ -995,38 +995,35 @@ class BookInsertionEnv(BaseEnv):
 
         # if 'contact' in self._obs_mode:
         if self.render_contact_map or self.render_contact_forces_map:
-            with torch.device(self.device):
-                contact_data_dict = self.get_extrinsic_contact_data(return_contact_positions=True, return_contact_forces=self.render_contact_forces_map)
-                assert contact_data_dict['contact_positions'].shape[-1] == 3, "contact_positions must have shape bxNx3"
-                extra['extrinsic_contact_positions'] = contact_data_dict['contact_positions']
-                if self.render_contact_forces_map:
-                    assert contact_data_dict['contact_forces'].shape[-1] == 3, "contact_forces must have shape bxNx3"
-                    extra['extrinsic_contact_forces'] = contact_data_dict['contact_forces']
-                b, N, _ = contact_data_dict['contact_positions'].shape
-                contact_positions = contact_data_dict['contact_positions'][~torch.any(torch.isnan(contact_data_dict['contact_positions']), dim=2)].reshape(b, -1, 3)
-                b, N, _ = contact_positions.shape
-                if self.render_contact_map:
-                    contact_map = torch.zeros((b, self.camera_height, self.camera_width, 1), dtype=torch.float32)
-                if self.render_contact_forces_map:
-                    contact_forces_map = torch.zeros((b, self.camera_height, self.camera_width, 3), dtype=torch.float32)
-                if N > 0:
-                    contact_pixel_coordinates = self.batched_position_to_pixel_coordinates(contact_positions)
-                    contact_image_array_indices = self.pixel_coordinates_to_image_array_indices(contact_pixel_coordinates)
+            extra.update(self.get_extrinsic_contact_map_data(return_contact_positions_map=self.render_contact_map, return_contact_forces_map=self.render_contact_forces_map))
+            # with torch.device(self.device):
+            #     contact_data_dict = self.get_extrinsic_contact_data(return_contact_positions=True, return_contact_forces=self.render_contact_forces_map)
+            #     assert contact_data_dict['contact_positions'].shape[-1] == 3, "contact_positions must have shape bxNx3"
+            #     extra['extrinsic_contact_positions'] = contact_data_dict['contact_positions']
+            #     if self.render_contact_forces_map:
+            #         assert contact_data_dict['contact_forces'].shape[-1] == 3, "contact_forces must have shape bxNx3"
+            #         extra['extrinsic_contact_forces'] = contact_data_dict['contact_forces']
+            #     b, N, _ = contact_data_dict['contact_positions'].shape
+            #     contact_positions = contact_data_dict['contact_positions'][~torch.any(torch.isnan(contact_data_dict['contact_positions']), dim=2)].reshape(b, -1, 3)
+            #     b, N, _ = contact_positions.shape
+            #     if self.render_contact_map:
+            #         contact_map = torch.zeros((b, self.camera_height, self.camera_width, 1), dtype=torch.float32)
+            #     if self.render_contact_forces_map:
+            #         contact_forces_map = torch.zeros((b, self.camera_height, self.camera_width, 3), dtype=torch.float32)
+            #     if N > 0:
+            #         contact_pixel_coordinates = self.batched_position_to_pixel_coordinates(contact_positions)
+            #         contact_image_array_indices = self.pixel_coordinates_to_image_array_indices(contact_pixel_coordinates)
 
-                    if self.render_contact_map:
-                        contact_map[tuple(contact_image_array_indices.T)] = 1.0
-                    if self.render_contact_forces_map:
-                        contact_forces = contact_data_dict['contact_forces'][~torch.any(torch.isnan(contact_data_dict['contact_forces']), dim=2)].reshape(b, -1, 3)
-                        contact_forces_map[tuple(contact_image_array_indices.T)] = contact_forces
-                if self.render_contact_map:
-                    extra['extrinsic_contact_map'] = contact_map
-                if self.render_contact_forces_map:
-                    extra['extrinsic_contact_forces_map'] = contact_forces_map
+            #         if self.render_contact_map:
+            #             contact_map[tuple(contact_image_array_indices.T)] = 1.0
+            #         if self.render_contact_forces_map:
+            #             contact_forces = contact_data_dict['contact_forces'][~torch.any(torch.isnan(contact_data_dict['contact_forces']), dim=2)].reshape(b, -1, 3)
+            #             contact_forces_map[tuple(contact_image_array_indices.T)] = contact_forces
+            #     if self.render_contact_map:
+            #         extra['extrinsic_contact_map'] = contact_map
+            #     if self.render_contact_forces_map:
+            #         extra['extrinsic_contact_forces_map'] = contact_forces_map
                     
-        # if self.render_contact_map:
-        #     extra['extrinsic_contact_positions'] = contact_data_dict['contact_positions']
-        #     extra['extrinsic_contact_map'] = self.pixel_coordinates_to_image_array_indices(extra['extrinsic_contact_positions'])
-
         if self.render_dtc_maps or self.render_normals_maps:
             extra.update(self.get_extra_contact_features(self.render_dtc_maps, self.render_normals_maps))
 
@@ -1058,6 +1055,39 @@ class BookInsertionEnv(BaseEnv):
         env_mesh = tm.util.concatenate(env_object_meshes_list + self.table_mesh)
         return env_mesh_list, env_mesh
 
+    def get_extrinsic_contact_map_data(self, return_contact_positions_map=True, return_contact_forces_map=True):
+        assert return_contact_positions_map or return_contact_forces_map, "must return at least one of contact positions map or forces map"
+        contact_map_dict = dict()
+        with torch.device(self.device):
+            contact_data_dict = self.get_extrinsic_contact_data(return_contact_positions=True, return_contact_forces=return_contact_forces_map)
+            assert contact_data_dict['contact_positions'].shape[-1] == 3, "contact_positions must have shape bxNx3"
+            if return_contact_positions_map:
+                contact_map_dict['extrinsic_contact_positions'] = contact_data_dict['contact_positions']
+            if return_contact_forces_map:
+                assert contact_data_dict['contact_forces'].shape[-1] == 3, "contact_forces must have shape bxNx3"
+                contact_map_dict['extrinsic_contact_forces'] = contact_data_dict['contact_forces']
+            b, N, _ = contact_data_dict['contact_positions'].shape
+            contact_positions = contact_data_dict['contact_positions'][~torch.any(torch.isnan(contact_data_dict['contact_positions']), dim=2)].reshape(b, -1, 3)
+            b, N, _ = contact_positions.shape
+            if return_contact_positions_map:
+                contact_map = torch.zeros((b, self.camera_height, self.camera_width, 1), dtype=torch.float32)
+            if return_contact_forces_map:
+                contact_forces_map = torch.zeros((b, self.camera_height, self.camera_width, 3), dtype=torch.float32)
+            if N > 0:
+                contact_pixel_coordinates = self.batched_position_to_pixel_coordinates(contact_positions)
+                contact_image_array_indices = self.pixel_coordinates_to_image_array_indices(contact_pixel_coordinates)
+
+                if return_contact_positions_map:
+                    contact_map[tuple(contact_image_array_indices.T)] = 1.0
+                if return_contact_forces_map:
+                    contact_forces = contact_data_dict['contact_forces'][~torch.any(torch.isnan(contact_data_dict['contact_forces']), dim=2)].reshape(b, -1, 3)
+                    contact_forces_map[tuple(contact_image_array_indices.T)] = contact_forces
+            if return_contact_positions_map:
+                contact_map_dict['extrinsic_contact_map'] = contact_map
+            if return_contact_forces_map:
+                contact_map_dict['extrinsic_contact_forces_map'] = contact_forces_map
+        return contact_map_dict
+    
     def get_extra_contact_features(self, render_dtc_maps, render_normals_maps):
         # TODO handle parallel envs
         extra_contact_features_dict = dict()
