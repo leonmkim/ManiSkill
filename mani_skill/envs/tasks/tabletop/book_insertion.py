@@ -874,7 +874,7 @@ class BookInsertionEnv(BaseEnv):
                 self.robot_config.init_qpos
             )
             qpos = qpos.repeat(b, 1)
-            qpos[:, -2:] = (self.grasped_book_sizes[:, 1])/2 + .001
+            qpos[:, -2:] = (self.grasped_book_sizes[:, 1])/2 + .001 # set gripper width close to book width
             self.agent.robot.set_qpos(qpos)
             
             # This is for the root pose
