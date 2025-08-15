@@ -14,7 +14,18 @@ from mani_skill.utils.structs.types import Array, Device
 
 from pytorch3d import transforms
 
+import einops
 
+#%%
+import sys, os
+from pathlib import Path
+# add contact_estimation to the path
+path_to_this_file = Path(os.path.abspath(__file__))
+#%%
+path_to_contact_estimation = path_to_this_file.parents[3] / "contact_estimation"
+sys.path.append(str(path_to_contact_estimation))
+from src.dataset.gazebo_to_trimesh import generate_rays_from_camera, generate_min_distances_image, normals_to_xyz_map, get_min_grasped_obj_sdf_at_env_hits_data, get_min_env_sdf_at_grasped_obj_hits_data
+#%%
 # -------------------------------------------------------------------------- #
 # Utilities for working with tensors, numpy arrays, and batched data
 # -------------------------------------------------------------------------- #
@@ -795,3 +806,269 @@ def compute_action_plan_error(predicted_action_plan:torch.Tensor, ground_truth_a
 
     # return ground_truth_to_predicted_translation_errors_vector_in_world, ground_truth_to_predicted_translation_errors, ground_truth_to_predicted_rotation_axis_angle_in_world, ground_truth_to_predicted_rotation_angle_errors
     return ground_truth_to_predicted_translation_errors_vector_in_world, ground_truth_to_predicted_rotation_axis_angle_in_world
+
+def batched_position_to_pixel_coordinates(positions, camera_intrinsic, camera_extrinsic):
+    '''
+    positions: bxNx3
+    returns: projected_points (u,v): bxNx2
+    '''
+    assert positions.ndim == 3, "positions must have shape bxNx3"
+    assert positions.shape[-1] == 3, "positions must have shape bxNx3"
+    b, N, _ = positions.shape
+    positions = einops.rearrange(positions, 'b n c -> (b n) c')
+    # bx4x4 @ b*Nx3 -> b*Nx3
+    # contact_positions_in_cam = transform_points(contact_positions, self.base_camera_extrinsic_cv)
+    positions_in_cam = torch.cat([positions, torch.ones((b*N, 1), device=positions.device)], dim=1)
+    positions_in_cam = einops.rearrange(torch.bmm(camera_extrinsic, (positions_in_cam.T).unsqueeze(0)), 'b c n -> (b n) c')[..., :3]
+    # project to image plane
+    # bx3x3 @ b*Nx3 -> bxNx3
+    projected_points = einops.rearrange(torch.bmm(camera_intrinsic, (positions_in_cam.T).unsqueeze(0)), 'b c n -> (b n) c')
+    projected_points = projected_points[..., :2] / projected_points[..., 2:]
+    # b*Nx2
+    projected_points = einops.rearrange(projected_points, '(b n) c -> b n c', b=b, n=N)
+
+    # filter out points outside of image plane
+    projected_points = projected_points.int()
+
+    return projected_points
+
+def get_extrinsic_contact_data(num_envs, device, scene, max_extrinsic_contacts, object_name, robot_name, return_contact_positions=False, return_contact_forces=False):
+    assert return_contact_positions or return_contact_forces, "Must return either contact positions or contact forces"
+    assert num_envs == 1, "Only supports single envs for now"
+    contact_data = dict()
+    with torch.device(device):
+        # TODO extend to multiple envs
+        if return_contact_positions:
+            contact_positions = torch.nan*torch.ones((1, max_extrinsic_contacts, 3), device=device)
+        if return_contact_forces:
+            contact_forces = torch.nan*torch.ones((1, max_extrinsic_contacts, 3), device=device)
+        contacts = scene.get_contacts()
+        filtered_contacts = list()
+        # filter contacts to only include contacts between grasped_book
+        if len(contacts) > 0:
+            for contact in contacts:
+                body_name_0 = contact.bodies[0].entity.name
+                body_name_1 = contact.bodies[1].entity.name
+                if object_name in body_name_0 or object_name in body_name_1:
+                    # and not contact panda
+                    if robot_name not in body_name_0 and robot_name not in body_name_1:
+                        filtered_contacts.append(contact)
+        contacts = filtered_contacts
+        contact_idx = 0
+        if len(contacts) > 0:
+            for contact in contacts:
+                for contact_point in contact.points:
+                    if np.linalg.norm(contact_point.impulse) > 0:
+                        if return_contact_forces:
+                            contact_forces[0, contact_idx] = torch.from_numpy(contact_point.impulse)
+                            # switch direction if grasped_book is the second body
+                            # body_name_0 = contact.bodies[0].entity.name
+                            body_name_1 = contact.bodies[1].entity.name
+                            if object_name in body_name_1:
+                                contact_forces[0, contact_idx] *= -1
+                        if return_contact_positions:
+                            contact_positions[0, contact_idx] = torch.from_numpy(contact_point.position)
+                        contact_idx += 1
+                        # torch.from_numpy(contact_point.position)
+                # contact_positions.extend([torch.from_numpy(contact_point.position) for contact_point in contact.points])
+        if return_contact_forces:
+            contact_data['contact_forces'] = contact_forces
+        if return_contact_positions:
+            contact_data['contact_positions'] = contact_positions
+        return contact_data
+    
+def pixel_coordinates_to_image_array_indices(pixel_coordinates, camera_height, camera_width, device):
+    # TODO extend to multiple envs
+    '''
+    pixel_coordinates in format (u,v): bxNx2
+    returns: image_array_indices: bxHxWx1
+    '''
+    # filter out nan rows
+    assert pixel_coordinates.ndim == 3, "pixel_coordinates must have shape bxNx2"
+    assert pixel_coordinates.shape[-1] == 2, "pixel_coordinates must have shape bxNx2"
+    with torch.device(device):
+        # swap u and v to match image coordinates
+        pixel_coordinates = pixel_coordinates[..., [1, 0]]
+        
+        # filter out points outside of image plane
+        valid_points = (pixel_coordinates[..., 0] >= 0) & (pixel_coordinates[..., 0] < camera_height) & (pixel_coordinates[..., 1] >= 0) & (pixel_coordinates[..., 1] < camera_width)
+        pixel_coordinates = pixel_coordinates[valid_points]
+
+        # add index for batch dimension
+        pixel_coordinates = torch.cat([torch.zeros((pixel_coordinates.shape[0], 1), dtype=torch.int), pixel_coordinates], dim=1)
+    return pixel_coordinates
+
+def get_extrinsic_contact_map_data(num_envs, device, scene, max_extrinsic_contacts, camera_height, camera_width, camera_intrinsic, camera_extrinsic, object_name, robot_name, return_contact_positions_map=True, return_contact_forces_map=True):
+    assert return_contact_positions_map or return_contact_forces_map, "must return at least one of contact positions map or forces map"
+    contact_map_dict = dict()
+    with torch.device(device):
+        contact_data_dict = get_extrinsic_contact_data(num_envs, device, scene, max_extrinsic_contacts, object_name, robot_name, return_contact_positions=True, return_contact_forces=return_contact_forces_map)
+        assert contact_data_dict['contact_positions'].shape[-1] == 3, "contact_positions must have shape bxNx3"
+        if return_contact_positions_map:
+            contact_map_dict['extrinsic_contact_positions'] = contact_data_dict['contact_positions']
+        if return_contact_forces_map:
+            assert contact_data_dict['contact_forces'].shape[-1] == 3, "contact_forces must have shape bxNx3"
+            contact_map_dict['extrinsic_contact_forces'] = contact_data_dict['contact_forces']
+        b, N, _ = contact_data_dict['contact_positions'].shape
+        contact_positions = contact_data_dict['contact_positions'][~torch.any(torch.isnan(contact_data_dict['contact_positions']), dim=2)].reshape(b, -1, 3)
+        b, N, _ = contact_positions.shape
+        if return_contact_positions_map:
+            contact_map = torch.zeros((b, camera_height, camera_width, 1), dtype=torch.float32)
+        if return_contact_forces_map:
+            contact_forces_map = torch.zeros((b, camera_height, camera_width, 3), dtype=torch.float32)
+        if N > 0:
+            contact_pixel_coordinates = batched_position_to_pixel_coordinates(contact_positions, camera_intrinsic, camera_extrinsic)
+            contact_image_array_indices = pixel_coordinates_to_image_array_indices(contact_pixel_coordinates, camera_height, camera_width, device)
+
+            if return_contact_positions_map:
+                contact_map[tuple(contact_image_array_indices.T)] = 1.0
+            if return_contact_forces_map:
+                contact_forces = contact_data_dict['contact_forces'][~torch.any(torch.isnan(contact_data_dict['contact_forces']), dim=2)].reshape(b, -1, 3)
+                contact_forces_map[tuple(contact_image_array_indices.T)] = contact_forces
+        if return_contact_positions_map:
+            contact_map_dict['extrinsic_contact_map'] = contact_map
+        if return_contact_forces_map:
+            contact_map_dict['extrinsic_contact_forces_map'] = contact_forces_map
+    return contact_map_dict
+
+def get_extra_contact_features(env_mesh_list, env_mesh, EE_object_mesh_list, EE_object_mesh, tm_camera, render_dtc_maps, render_normals_maps):
+    # TODO handle parallel envs
+    extra_contact_features_dict = dict()
+
+    ray_origins, ray_directions, pixels_uv = generate_rays_from_camera(tm_camera)
+
+    env_hit_min_locations, env_hit_min_pixels_uv, env_hit_min_distances, env_hit_min_index_tri, env_hit_min_ray_directions = get_min_grasped_obj_sdf_at_env_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh, EE_object_mesh_list)
+    if render_dtc_maps:
+        EE_obj_sdf_on_env_image, EE_obj_sdf_on_env_mask = generate_min_distances_image(env_hit_min_pixels_uv, env_hit_min_distances, tm_camera.resolution[::-1])
+        EE_obj_sdf_on_env_image = EE_obj_sdf_on_env_image.astype(np.float32)[:240, :320, np.newaxis]
+        # EE_obj_sdf_on_env_mask = EE_obj_sdf_on_env_mask.astype(bool)[:240, :320]
+        # assert EE_obj_sdf_on_env_image.shape == image_shape + (1,)
+
+        EE_obj_sdf_on_env_image = to_tensor(EE_obj_sdf_on_env_image).unsqueeze(0) # hack to add env/batch dimension
+        extra_contact_features_dict['env_dtc_map'] = EE_obj_sdf_on_env_image
+
+    if render_normals_maps:
+        min_env_surface_normals = env_mesh.face_normals[env_hit_min_index_tri]
+        env_xyz_normals_image, env_xyz_normals_image_mask = normals_to_xyz_map(min_env_surface_normals, tm_camera.resolution[::-1], env_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
+        env_xyz_normals_image = env_xyz_normals_image.astype(np.float32)[:240, :320]
+        # env_xyz_normals_image_mask = env_xyz_normals_image_mask.astype(bool)[:240, :320]
+
+        env_xyz_normals_image = to_tensor(env_xyz_normals_image).unsqueeze(0) # hack to add env/batch dimension
+        extra_contact_features_dict['env_normals_map'] = env_xyz_normals_image
+
+    EE_obj_hit_min_locations, EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, EE_obj_hit_min_index_tri, EE_obj_hit_min_ray_directions = get_min_env_sdf_at_grasped_obj_hits_data(ray_origins, ray_directions, pixels_uv, env_mesh_list, EE_object_mesh)
+    if render_dtc_maps:
+        env_sdf_on_EE_obj_image, env_sdf_on_EE_obj_mask = generate_min_distances_image(EE_obj_hit_min_pixels_uv, EE_obj_hit_min_distances, tm_camera.resolution[::-1])
+        env_sdf_on_EE_obj_image = env_sdf_on_EE_obj_image.astype(np.float32)[:240, :320, np.newaxis]
+        # env_sdf_on_EE_obj_mask = env_sdf_on_EE_obj_mask.astype(bool)[:240, :320]
+
+        env_sdf_on_EE_obj_image = to_tensor(env_sdf_on_EE_obj_image).unsqueeze(0) # hack to add env/batch dimension
+        extra_contact_features_dict['EE_dtc_map'] = env_sdf_on_EE_obj_image
+    
+    if render_normals_maps:       
+        min_EE_object_surface_normals = EE_object_mesh.face_normals[EE_obj_hit_min_index_tri] # these are normalized already
+        EE_object_xyz_normals_image, EE_object_xyz_normals_image_mask = normals_to_xyz_map(min_EE_object_surface_normals, tm_camera.resolution[::-1], EE_obj_hit_min_pixels_uv)#, fill_value=1.0/np.sqrt(3.0))
+        EE_object_xyz_normals_image = EE_object_xyz_normals_image.astype(np.float32)[:240, :320]
+        # EE_object_xyz_normals_image_mask = EE_object_xyz_normals_image_mask.astype(bool)[:240, :320]
+        
+        EE_object_xyz_normals_image = to_tensor(EE_object_xyz_normals_image).unsqueeze(0) # hack to add env/batch dimension
+        extra_contact_features_dict['EE_normals_map'] = EE_object_xyz_normals_image
+    
+    return extra_contact_features_dict
+
+def convert_sapien_pose_to_transform_matrix(sapien_pose):
+    position, quaternion = sapien_pose.p, sapien_pose.q
+    if len(position.shape) == 2:
+        position = position[0]
+    if len(quaternion.shape) == 2:
+        quaternion = quaternion[0]
+    if isinstance(position, torch.Tensor):
+        position = position.cpu().numpy()
+    if isinstance(quaternion, torch.Tensor):
+        quaternion = quaternion.cpu().numpy()
+    transform_matrix = np.eye(4)
+    transform_matrix[:3, :3] = R.from_quat(quaternion, scalar_first=True).as_matrix()
+    transform_matrix[:3, 3] = position
+    return transform_matrix
+
+def get_cuboid_dict(device, pose, half_dims):
+    # returns the batched center position, three half-lenghts, and the rotation matrix of the cuboid
+    assert pose.ndim == 2 and pose.shape[1] == 7, f"Pose must have shape (batch_size, 7) with quaternion representation but got {pose.shape}"
+    assert half_dims.ndim == 2 and half_dims.shape[1] == 3, f"Half dimensions must have shape (batch_size, 3) but got {half_dims.shape}"
+    assert pose.shape[0] == half_dims.shape[0], "Pose and half_dims must have the same batch size"
+    with torch.device(device):
+        # get the cuboid pose
+        cuboid_pose = pose # bx7
+        # compute the cuboid
+        center_pos = cuboid_pose[:, :3] # bx3
+        rotation_matrix = transforms.quaternion_to_matrix(cuboid_pose[:, 3:]) # bx3x3
+    return {'center_pos': center_pos, 'half_dims': half_dims, 'rotation_matrix': rotation_matrix}
+
+
+def cuboid_intersection_test(device, cuboid_A_dict, cuboid_B_dict):
+    # write our own function of whether the grasped book is still in the gripper by checking if two cuboids intersect
+    # cuboid one is defined as the volume in between the gripper fingers, and cuboid two is the grasped book
+    # return a torch boolean tensor of shape (num_envs,)
+    # following Stefan Gottschalk's implementation of OBB SAT https://gamma.cs.unc.edu/users/gottschalk/main.pdf
+    with torch.device(device):
+        r_circumscribed_sphere_A = torch.linalg.norm(cuboid_A_dict['half_dims'], axis=1, ord=2, keepdim=True)
+        r_circumscribed_sphere_B = torch.linalg.norm(cuboid_B_dict['half_dims'], axis=1, ord=2, keepdim=True)
+        W_t_AB = cuboid_B_dict['center_pos'] - cuboid_A_dict['center_pos'] # bx3
+        center_distance = torch.linalg.norm(W_t_AB, axis=1, ord=2, keepdim=True)
+        # if distance is greater than the sum of the two spheres, then they are not intersecting
+        cuboids_are_not_intersecting = center_distance > (r_circumscribed_sphere_A + r_circumscribed_sphere_B)
+        if torch.all(cuboids_are_not_intersecting): # we can break early if ALL cuboids are not intersecting
+            return cuboids_are_not_intersecting.logical_not().squeeze(-1) # return a boolean tensor of shape (num_envs,)
+        
+        # otherwise, need to continue with a more precise check using Separating Axis Theorem (SAT)
+        A_R_B = torch.bmm(cuboid_A_dict['rotation_matrix'].transpose(1, 2), cuboid_B_dict['rotation_matrix']) # bx3x3
+        abs_A_R_B = torch.abs(A_R_B) # bx3x3
+
+        A_t_AB = torch.bmm(cuboid_A_dict['rotation_matrix'].transpose(1, 2), W_t_AB.unsqueeze(-1)).squeeze(-1) # bx3
+        abs_A_t_AB = torch.abs(A_t_AB) # bx3
+
+        # check the axes of A
+        for i in range(3):
+            ra = cuboid_A_dict['half_dims'][:, i:i+1] # bx1
+            rb = (cuboid_B_dict['half_dims']*abs_A_R_B[:, i]).sum(dim=1, keepdim=True) # bx1
+            cuboids_are_not_intersecting = torch.logical_or(cuboids_are_not_intersecting, abs_A_t_AB[:, i:i+1] > (ra + rb))
+            if torch.all(cuboids_are_not_intersecting):
+                return cuboids_are_not_intersecting.logical_not().squeeze(-1)
+
+        # check the axes of B
+        abs_B_R_A = abs_A_R_B.transpose(1, 2) # bx3x3
+
+        B_t_AB = torch.bmm(cuboid_B_dict['rotation_matrix'].transpose(1, 2), W_t_AB.unsqueeze(-1)).squeeze(-1) # bx3
+        abs_B_t_AB = torch.abs(B_t_AB) # bx3
+
+        for i in range(3):
+            ra = cuboid_B_dict['half_dims'][:, i:i+1] # bx1
+            rb = (cuboid_A_dict['half_dims']*abs_B_R_A[:, i]).sum(dim=1, keepdim=True) # bx1
+            cuboids_are_not_intersecting = torch.logical_or(cuboids_are_not_intersecting, abs_B_t_AB[:, i:i+1] > (ra + rb))
+            if torch.all(cuboids_are_not_intersecting):
+                return cuboids_are_not_intersecting.logical_not().squeeze(-1)
+
+        # check the axes of A x B
+        for i in range(3):
+            for j in range(3):
+                # compute the axis as the cross product of the two rotation matrices
+                axis = torch.cross(cuboid_A_dict['rotation_matrix'][:, :, i], cuboid_B_dict['rotation_matrix'][:, :, j], dim=1) # bx3
+                # if the axis is zero, skip it
+                axis_norm = torch.linalg.norm(axis, axis=1, ord=2, keepdim=True)
+                if (axis_norm < 1e-6).all():
+                    continue
+                # simplified SAT check for the axis 
+                ra = (cuboid_A_dict['half_dims'][:, (i+1)%3] * abs_A_R_B[:, (i+2)%3, j] + 
+                        cuboid_A_dict['half_dims'][:, (i+2)%3] * abs_A_R_B[:, (i+1)%3, j])
+                
+                rb = (cuboid_B_dict['half_dims'][:, (j+1)%3] * abs_A_R_B[:, i, (j+2)%3] + 
+                        cuboid_B_dict['half_dims'][:, (j+2)%3] * abs_A_R_B[:, i, (j+1)%3])
+                
+                abs_axis_t_AB = torch.abs(A_t_AB[:, (i+2)%3] * A_R_B[:, (i+1)%3, j] -
+                                            A_t_AB[:, (i+1)%3] * A_R_B[:, (i+2)%3, j])
+                cuboids_are_not_intersecting = torch.logical_or(cuboids_are_not_intersecting, abs_axis_t_AB > (ra + rb))
+                if torch.all(cuboids_are_not_intersecting):
+                    return cuboids_are_not_intersecting.logical_not().squeeze(-1)
+
+        # if we reach here, then the cuboids are intersecting
+        return torch.logical_or(cuboids_are_not_intersecting, torch.zeros_like(cuboids_are_not_intersecting, dtype=torch.bool)).logical_not().squeeze(-1) # return a boolean tensor of shape (num_envs,) where True means the cuboids are intersecting

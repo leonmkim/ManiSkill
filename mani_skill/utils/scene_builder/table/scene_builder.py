@@ -13,6 +13,16 @@ from mani_skill.agents.robots.fetch import FETCH_WHEELS_COLLISION_BIT
 from mani_skill.utils.building.ground import build_ground
 from mani_skill.utils.scene_builder import SceneBuilder
 
+import trimesh as tm
+
+def get_table_primitive_mesh_list(length, width, height, global_transform=None):
+    table_box_offset_pose = np.eye(4)
+    table_box_offset_pose[2, 3] = height/2
+    table_mesh = tm.primitives.Box(extents=[length, width, height], transform=table_box_offset_pose)
+    if global_transform is not None:
+        table_mesh.apply_transform(global_transform)
+    return [table_mesh]
+
 class SimpleTableSceneBuilder(SceneBuilder):
     def build(self):
         builder = self.scene.create_actor_builder()

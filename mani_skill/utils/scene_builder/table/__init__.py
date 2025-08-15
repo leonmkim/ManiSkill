@@ -1,1 +1,1 @@
-from .scene_builder import TableSceneBuilder, SimpleTableSceneBuilder
+from .scene_builder import TableSceneBuilder, SimpleTableSceneBuilder, get_table_primitive_mesh_list

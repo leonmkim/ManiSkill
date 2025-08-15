@@ -86,7 +86,10 @@ class BaseAgent:
         agent_idx: Optional[str] = None,
         initial_pose: Optional[Union[sapien.Pose, Pose]] = None,
         build_separate: bool = False,
+        urdf_config: Union[str, Dict] = None,
     ):
+        if urdf_config is not None:
+            self.urdf_config = urdf_config
         self.scene = scene
         self._control_freq = control_freq
         self._agent_idx = agent_idx

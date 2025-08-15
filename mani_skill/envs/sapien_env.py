@@ -210,6 +210,11 @@ class BaseEnv(gym.Env):
         enhanced_determinism: bool = False,
         **kwargs,
     ):
+        if 'urdf_config' in kwargs:
+            self.urdf_config = kwargs['urdf_config']
+            del kwargs['urdf_config']
+        else:
+            self.urdf_config = None
         self._enhanced_determinism = enhanced_determinism
 
         self.num_envs = num_envs
@@ -410,6 +415,7 @@ class BaseEnv(gym.Env):
         if robot_uids == "none" or robot_uids == ("none", ):
             self.agent = None
             return
+        
         if robot_uids is not None:
             if not isinstance(robot_uids, tuple):
                 robot_uids = [robot_uids]
@@ -429,6 +435,7 @@ class BaseEnv(gym.Env):
                     agent_idx=i if len(robot_uids) > 1 else None,
                     initial_pose=initial_agent_poses[i] if initial_agent_poses is not None else None,
                     build_separate=build_separate,
+                    urdf_config=self.urdf_config,
                 )
                 agents.append(agent)
         if len(agents) == 1:

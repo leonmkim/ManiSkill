@@ -18,7 +18,7 @@ from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
 
 
-from mani_skill.envs.tasks.tabletop.book_insertion import GraspedBookConfig, BookEndsConfig, EnvBooksConfig, SlotConfig
+from mani_skill.envs.tasks.tabletop.peg_insertion_side_custom import RobotConfig
 
 from mani_skill.utils.wrappers.record_rerun import RecordEpisodeRerun
 import multiprocessing
@@ -30,7 +30,7 @@ import cv2
 import time
 
 from mani_skill.utils.teleoperation import SpacemouseInput
-spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,1,1,1])
+spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,0,0,1])
 desired_viewing_size = (256, 256)
 
 ## testing book insertion task
@@ -47,11 +47,17 @@ env = gym.make(
     render_backend="gpu",
     obs_mode="rgb",
     # obs_mode="none",
+    render_contact_map=False,
+    render_dtc_maps=False,
+    render_normals_maps=False,
+    render_contact_forces_map=False,
     control_mode="pd_ee_target_delta_pose",
     # control_mode="pd_ee_pose",
     # control_mode="pd_ee_target_pose",
     # control_mode="pd_ee_target_delta_pose_unnormalized",
     # control_mode="pd_ee_delta_pose",
+    # urdf_config=urdf_config,
+    # robot_config=robot_config,
     sim_config=dict(
         sim_freq=100, # default 100
         control_freq=20, # default 20
@@ -342,12 +348,33 @@ while True:
         # fig.canvas.flush_events()
         # plt.pause(0.001)
 
-        current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
-        # current_frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
+        # current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
+        current_frame = cv2.cvtColor(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), cv2.COLOR_RGB2BGR)
+        # # draw a 144x144 box around the end effector pixel
+        # end_effector_pixel_coordinates = obs['extra']['end_effector_pixel_coordinates'][0].cpu().numpy()
+        # x, y = end_effector_pixel_coordinates[:2]
+        # cv2.rectangle(current_frame, (x - 72, y - 72), (x + 72, y + 72), (0, 255, 0), 2)
+
         # current_frame = obs['sensor_data']['base_camera']['Color'][0][:,:,:3].cpu().numpy()
 
         # current_frame = (current_frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
         # current_frame = cv2.resize(current_frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
+
+        # current_frame = np.hstack((current_frame,((obs['extra']['env_normals_map'][0].cpu().numpy() + 1.0) * (255/2.0)).astype(np.uint8)))
+        # concatenate horizontally a second frame
+        # current_frame = np.hstack((current_frame,((obs['extra']['EE_normals_map'][0].cpu().numpy() + 1.0) * (255/2.0)).astype(np.uint8)))
+
+        # EE_dtc_map = np.clip(obs['extra']['EE_dtc_map'][0].cpu().numpy(), 0, 0.2)
+        # env_dtc_map = np.clip(obs['extra']['env_dtc_map'][0].cpu().numpy(), 0, 0.2)
+        # assert env_dtc_map.ndim == 3, f"Expected 3D array, got {env_dtc_map.ndim}D with shape {env_dtc_map.shape}"
+        # assert env_dtc_map.shape[-1] == 1, f"Expected 1 channel, got {env_dtc_map.shape[-1]} channels with shape {env_dtc_map.shape}"
+        # combined_dtc_map = np.minimum(EE_dtc_map, env_dtc_map)
+        # assert combined_dtc_map.ndim == 3, f"Expected 3D array, got {combined_dtc_map.ndim}D with shape {combined_dtc_map.shape}"
+        # assert combined_dtc_map.shape[-1] == 1, f"Expected 1 channel, got {combined_dtc_map.shape[-1]} channels with shape {combined_dtc_map.shape}"
+
+        # combined_dtc_map = ((-1*combined_dtc_map + 0.2) * (255/0.2)).astype(np.uint8)
+        # combined_dtc_map = cv2.applyColorMap(combined_dtc_map, cv2.COLORMAP_BONE)
+        # current_frame = np.hstack((current_frame, combined_dtc_map))
 
         cv2.imshow("frame", current_frame)
         key = cv2.waitKey(1) & 0xFF
@@ -375,11 +402,14 @@ while True:
         time_to_sleep = elapsed_simtime - elapsed_realtime
         if time_to_sleep > 0:
             time.sleep(time_to_sleep)
-        if elapsed_timesteps % 50 == 0:
+        if elapsed_timesteps % 25 == 0:
             print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
-            # print(f"success: {info['success']} | success duration: {info['elapsed_success_duration']} | t. success: {info['transient_success']} | z_distance: {info['z_distance_bw_top_of_grasped_book_and_top_of_slot']}")
-            # print(f"grasped book is grasped: {info['grasped_book_is_possibly_grasped']}")
-    
+            # EE_pos = obs['extra']['end_effector_pose'][0, :3].cpu().numpy()
+            # q_pos = obs['agent']['qpos'][0].cpu().numpy()
+            # print(f"EE pos: {EE_pos}")
+            # print(f"q pos: {q_pos}")
+            print(f"success: {info['success']} | peg_head_pos_at_hole: {info['peg_head_pos_at_hole']} | peg_is_possibly_grasped: {info['peg_is_possibly_grasped']}")
+
     if key == ord('q'):
         num_trajs += 1
         break
