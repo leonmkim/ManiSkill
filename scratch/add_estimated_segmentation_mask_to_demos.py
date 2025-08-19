@@ -50,7 +50,7 @@ path_to_FISH = path_to_fish_leon / "FISH"
 assert path_to_FISH.exists(), f"Path {path_to_FISH} does not exist. Please check the path."
 sys.path.append(str(path_to_FISH))
 from agent.encoder import VisualFeatureSet
-from lerobot.common.policies.diffusion.configuration_diffusion import ActionConfig, ActionHistoryConfig
+from lerobot.common.policies.diffusion.configuration_diffusion import ActionConfig, ActionHistoryConfig, EndEffectorWrenchHistoryConfig
 from agent.encoder import MaskInputDict
 from dataset.expert_dataset import ExpertDatasetZarr
 #%%
@@ -70,7 +70,8 @@ from dataset.expert_dataset import ExpertDatasetZarr
 @click.argument('episode-idx', type=int)
 @click.argument('path-to-demo-root-dir', type=click.Path(exists=True, path_type=Path))
 @click.argument('demo-name', type=str)
-def main(episode_idx, path_to_demo_root_dir, demo_name):
+@click.argument('task-name', type=str)
+def main(episode_idx, path_to_demo_root_dir, demo_name, task_name):
     print(f"starting to process episode {episode_idx}...")
     device = 'cuda'
     assert path_to_demo_root_dir.exists(), f"Path {path_to_demo_root_dir} does not exist. Please check the path."
@@ -95,17 +96,33 @@ def main(episode_idx, path_to_demo_root_dir, demo_name):
     # sam2_options_string = "sam2.1-hiera-base-plus"
     hf_pretrained_model_name = f"facebook/{sam2_options_string}"
 
-    '''
-    from book_insertion env config
-    density_randomization_bounds: [650, 850]
-    height_randomization_bounds: [0.165, 0.25]
-    width_randomization_bounds: [0.03, 0.065]
-    length_randomization_bounds: [0.1, 0.15]
-    '''
 
-    max_grasped_object_length_x = 0.15 + .005
-    max_grasped_object_width_y = 0.065 + .005
-    max_grasped_object_height_z = 0.25 + .005
+    if task_name == 'book_insertion':
+        '''
+        from book_insertion env config
+        density_randomization_bounds: [650, 850]
+        height_randomization_bounds: [0.165, 0.25]
+        width_randomization_bounds: [0.03, 0.065]
+        length_randomization_bounds: [0.1, 0.15]
+        '''
+        max_grasped_object_length_x = 0.15 + .005
+        max_grasped_object_width_y = 0.065 + .005
+        max_grasped_object_height_z = 0.25 + .005
+    elif task_name == 'peg_insertion':
+        '''
+        randomize_length: bool = False
+        nominal_length: float = 0.105  # default peg length is .105m
+        length_randomization_bounds: list = field(default_factory=lambda: [0.085, 0.125])  # default peg length is .105m
+
+        nominal_radius: float = 0.02  # default peg radius is .02m
+        randomize_radius: bool = True
+        radius_randomization_bounds: list = field(default_factory=lambda: [0.015, 0.03])  # default peg radius is .02m
+        '''
+        max_grasped_object_length_x = 0.210 + .0025
+        max_grasped_object_width_y = 0.06 + .0025
+        max_grasped_object_height_z = 0.55 + .0025
+    else:
+        raise ValueError(f"Unknown task name: {task_name}")
     mask_predictor = MaskPredictor(hf_pretrained_model_name=hf_pretrained_model_name, device=device, 
                                 max_grasped_object_length_x=max_grasped_object_length_x,
                                 max_grasped_object_width_y=max_grasped_object_width_y,
@@ -129,16 +146,18 @@ def main(episode_idx, path_to_demo_root_dir, demo_name):
 
     #%%
     mask_input_dict = MaskInputDict(enable=True, mask_list=['EE_obj_mask'], representation='channels', segmentation_model_name='gt_segmentation')
-    observation_cfg = VisualFeatureSet(use_color=True, use_depth=True, mask_input_dict=mask_input_dict, use_contact_map=False, use_sdf_maps=False, use_normals_maps=False)
+    observation_cfg = VisualFeatureSet(use_color=True, use_depth=True, mask_input_dict=mask_input_dict, use_contact_map=False, use_sdf_maps=False, use_normals_maps=False, use_contact_forces_map=False)
     action_horizon_length = 1
     action_history_length = 1
     action_config = ActionConfig(horizon_length=action_horizon_length, action_frame_expression='delta', input_rotation_representation='euler_angles')
     action_history_config = ActionHistoryConfig(enable=False, history_length=action_history_length, action_frame_expression='delta', action_frame='current_end_effector', rotation_representation='euler_angles')
+    end_effector_wrench_history_config = EndEffectorWrenchHistoryConfig(enable=False)
     episode_dataset = ExpertDatasetZarr(path_to_zarr, 
                                         demos_idxs_list_or_num=[episode_idx], 
                                         observation_cfg=observation_cfg, 
                                         action_config=action_config, 
                                         action_history_config=action_history_config, 
+                                        end_effector_wrench_history_config=end_effector_wrench_history_config,
                                         action_key='action',
                                         n_obs_steps=1,
                                         load_to_memory=False,
@@ -168,6 +187,9 @@ def main(episode_idx, path_to_demo_root_dir, demo_name):
     for i, batch in tqdm(enumerate(dataloader)):
     # batch = next(iter(dataloader))
         # i = 0
+        if i == 0 and task_name == 'peg_insertion':
+            initial_gt_mask = batch['observation.EE_obj_mask'][0,0,0].cpu().numpy()
+            assert initial_gt_mask.ndim == 2, "Initial ground truth mask is not 2D"
         color_image = einops.rearrange(batch['observation.rgb'][0,0], 'c h w -> h w c').cpu().numpy()
         depth_image = einops.rearrange(batch['observation.depth'][0,0], 'c h w -> h w c').cpu().numpy()
         EE_pose = batch['observation.state'][0,0,:7].cpu().numpy()
@@ -176,7 +198,10 @@ def main(episode_idx, path_to_demo_root_dir, demo_name):
         if i == 0: #initialize cutie
             # mask = batch['observation.EE_obj_mask'][0,0,0].cpu().numpy()
             # mask = mask_predictor.start_mask_tracking_from_mask(color_image, mask)
-            mask = mask_predictor.start_mask_tracking(color_image, depth_image, camera_K, cam_tf_world, EE_pose, gripper_width)
+            if task_name == 'peg_insertion':
+                mask = mask_predictor.start_mask_tracking_from_mask(color_image, initial_gt_mask)
+            else:
+                mask = mask_predictor.start_mask_tracking(color_image, depth_image, camera_K, cam_tf_world, EE_pose, gripper_width)
         else:
             # with torch.inference_mode(), torch.autocast(device, dtype=torch.bfloat16):
             #     out_obj_ids, out_mask_logits = sam2_online_predictor.track(color_image)
