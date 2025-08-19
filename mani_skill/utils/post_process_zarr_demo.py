@@ -200,16 +200,16 @@ def trim_start_and_end_of_trajectories(demo: ZarrGroup,
 def recursive_copy_meta_data(base_demo, new_demo):
     for key in base_demo.keys():
         if isinstance(base_demo[key], ZarrArray):
-            if key == 'ep_ids':
-                new_demo.create_array(key, shape=base_demo[key].shape, dtype='|S256', chunks=base_demo[key].chunks, compressors=base_demo[key].compressors)
-                for i, episode_id in enumerate(base_demo['ep_ids'][:]):
-                    episode_id_string = episode_id.decode('utf-8')
-                    assert episode_id_string.startswith('traj_')
-                    episode_id_string = f"{episode_id_string}"
-                    new_demo['ep_ids'][i:i+1] = np.array([episode_id_string.encode('utf-8')])
-            else:    
-                new_demo.create_array(key, shape=base_demo[key].shape, dtype=base_demo[key].dtype, chunks=base_demo[key].chunks, compressors=base_demo[key].compressors)
-                new_demo[key][...] = base_demo[key][:]
+            # if key == 'ep_ids':
+            #     new_demo.create_array(key, shape=base_demo[key].shape, dtype='|S256', chunks=base_demo[key].chunks, compressors=base_demo[key].compressors)
+            #     for i, episode_id in enumerate(base_demo['ep_ids'][:]):
+            #         episode_id_string = episode_id.decode('utf-8')
+            #         assert episode_id_string.startswith('traj_')
+            #         episode_id_string = f"{episode_id_string}"
+            #         new_demo['ep_ids'][i:i+1] = np.array([episode_id_string.encode('utf-8')])
+            # else:    
+            new_demo.create_array(key, shape=base_demo[key].shape, dtype=base_demo[key].dtype, chunks=base_demo[key].chunks, compressors=base_demo[key].compressors)
+            new_demo[key][...] = base_demo[key][:]
         elif isinstance(base_demo[key], ZarrGroup):
             new_demo.create_group(key)
             recursive_copy_meta_data(base_demo[key], new_demo[key])
@@ -309,10 +309,10 @@ def recursive_assert_structure(base_demo, new_demo):
                 continue
             recursive_assert_structure(base_demo[key], new_demo[key])
 
-def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths: list, delete_merged_demos: bool = False):
+def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths: list, delete_merged_demos: bool = False, create_copy_of_base_demo: bool = True):
     # before merging, make a copy of the base demo
     base_demo_copy_path = base_demo_path.with_name(f"{base_demo_path.stem}_copy{base_demo_path.suffix}")
-    if not base_demo_copy_path.exists():
+    if not base_demo_copy_path.exists() and create_copy_of_base_demo:
         post_process_logger.info(f"Copying base demo {base_demo_path.name} to {base_demo_copy_path.name}...")
         shutil.copytree(base_demo_path, base_demo_copy_path)
     # also copy the json file
@@ -324,10 +324,18 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
 
     post_process_logger.info(f"Merging {len(demos_to_add_to_base_paths)} demo datasets into base demo {base_demo_path.name}...")
     base_demo = zarr.open(base_demo_path, mode='r+')
+    if 'ep_ids' in base_demo['meta']:
+        # delete the ep_ids
+        print(f"deleting ep_ids of dataset {base_demo_path} as its not used")
+        del base_demo['meta']['ep_ids']
     with open(base_meta_json_path, 'r') as f:
         base_meta_json = json.load(f)
     for new_demo_path in demos_to_add_to_base_paths:
         new_demo = zarr.open(new_demo_path, mode='r+')
+        if 'ep_ids' in new_demo['meta']:
+            print(f"deleting ep_ids of dataset {new_demo_path} as its not used")
+            del new_demo['meta']['ep_ids']
+
         new_meta_json_path = new_demo_path.with_suffix('.json')
         with open(new_meta_json_path, 'r') as f:
             new_meta_json = json.load(f)
@@ -364,16 +372,16 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
             post_process_logger.info(f"New demo {new_demo_path.name} has already been modified, skipping updating...")
 
         # first update episode_ends of new demo
-        if not new_demo_already_modified:
-            new_demo['meta']['episode_ends'][...] += last_episode_end_of_base_demo 
+        # if not new_demo_already_modified:
+            # new_demo['meta']['episode_ends'][...] += last_episode_end_of_base_demo 
 
             # also update the ep_ids of the new demo
-            for i, episode_id in enumerate(new_demo['meta']['ep_ids'][:]):
-                episode_id_string = episode_id.decode('utf-8')
-                assert episode_id_string.startswith('traj_')
-                current_episode_id = int(episode_id_string.split('_')[-1])
-                new_episode_id = f'traj_{current_episode_id + base_demo_num_episodes}'
-                new_demo['meta']['ep_ids'][i:i+1] = [new_episode_id.encode('utf-8')]
+            # for i, episode_id in enumerate(new_demo['meta']['ep_ids'][:]):
+            #     episode_id_string = episode_id.decode('utf-8')
+            #     assert episode_id_string.startswith('traj_')
+            #     current_episode_id = int(episode_id_string.split('_')[-1])
+            #     new_episode_id = f'traj_{current_episode_id + base_demo_num_episodes}'
+            #     new_demo['meta']['ep_ids'][i:i+1] = [new_episode_id.encode('utf-8')]
         
         for episode_dict in new_meta_json['episodes']:
             episode_dict['episode_id'] += base_demo_num_episodes
@@ -442,43 +450,43 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 
 # traverse_tree(demo)
 #%%
+# # # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr')
+# # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_111025.zarr')
+# # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
 # # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr')
-# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_111025.zarr')
-# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
-# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr')
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/5_sim_all_demos_peginsertion_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/5_sim_all_demos_peginsertion_20hz_act/demos.zarr')
 
-zarr_store = zarr.open(base_demo_path, mode='r')
+# zarr_store = zarr.open(base_demo_path, mode='r')
 
-from mani_skill.utils.visualization import images_to_video
-episode_idx = 2
-episode_start = zarr_store['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
-episode_end = zarr_store['meta']['episode_ends'][episode_idx]
-images = zarr_store['data']['observation.rgb'][episode_start:episode_end]
-# images = zarr_store['episode_data'][f'episode_{episode_idx}']['sam2-hiera-base-plus']['observation.EE_obj_mask'][:]
-# images *= 255
-# images = images.astype(np.uint8)
-#%%
-# wrenches = zarr_store['data']['observation.end_effector_external_wrench_in_world'][episode_start:episode_end]
-# import matplotlib.pyplot as plt
-# plt.figure(figsize=(10, 5))
-# plt.plot(wrenches[:, 0], label='Force X')
-# plt.plot(wrenches[:, 1], label='Force Y')
-# plt.plot(wrenches[:, 2], label='Force Z')
-# plt.xlabel('Time Step')
-# plt.ylabel('Force (N)')
-# plt.title('End Effector External Wrench')
-# plt.legend()
-# plt.grid()
-# plt.show()
-#%%
+# from mani_skill.utils.visualization import images_to_video
+# episode_idx = 2
+# episode_start = zarr_store['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
+# episode_end = zarr_store['meta']['episode_ends'][episode_idx]
+# images = zarr_store['data']['observation.rgb'][episode_start:episode_end]
+# # images = zarr_store['episode_data'][f'episode_{episode_idx}']['sam2-hiera-base-plus']['observation.EE_obj_mask'][:]
+# # images *= 255
+# # images = images.astype(np.uint8)
+# #%%
+# # wrenches = zarr_store['data']['observation.end_effector_external_wrench_in_world'][episode_start:episode_end]
+# # import matplotlib.pyplot as plt
+# # plt.figure(figsize=(10, 5))
+# # plt.plot(wrenches[:, 0], label='Force X')
+# # plt.plot(wrenches[:, 1], label='Force Y')
+# # plt.plot(wrenches[:, 2], label='Force Z')
+# # plt.xlabel('Time Step')
+# # plt.ylabel('Force (N)')
+# # plt.title('End Effector External Wrench')
+# # plt.legend()
+# # plt.grid()
+# # plt.show()
+# #%%
 
-images_to_video(
-    images=images,
-    output_dir='./',
-    video_name=f'episode_{episode_idx}_video',
-    fps=20,
-)
+# images_to_video(
+#     images=images,
+#     output_dir='./',
+#     video_name=f'episode_{episode_idx}_video',
+#     fps=20,
+# )
 #%%
 # assert base_demo_path.exists()
 # # # # # base_demo_num_episodes = 10
@@ -588,9 +596,8 @@ images_to_video(
 
 dataset_name = 'sim_all_demos_peginsertion_20hz_act'
 # dataset_name = 'sim_recovery_demos_peginsertion_20hz_act'
-dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
-# dataset_root_dir = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1')
-
+# dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
+dataset_root_dir = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1')
 # demos_to_trim = [
 #     Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_112731.zarr'),
 # ]
@@ -619,17 +626,18 @@ for path_to_demo in demos_to_trim:
 # ###########################
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_175948_trimmed.zarr')
-# base_demo_path = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/700_sim_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act_copy/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_112731_trimmed.zarr')
 
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_112731_trimmed.zarr')
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/700_sim_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act_copy/demos.zarr')
+base_demo_path = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/638_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
 
 assert base_demo_path.exists()
 base_demo_path = base_demo_path.expanduser()
 demos_to_add_to_base_paths = [
     # Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/532_sim_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act/demos.zarr'),
-    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr'),
+    Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/269_sim_recovery_demos_peginsertion_20hz_act/demos.zarr'),
 ]
 # demos_to_add_to_base_paths = list()
 
@@ -647,7 +655,7 @@ for demo_path in demos_to_add_to_base_paths:
 # difference = DeepDiff(base_meta_json, demo_to_add_to_base_meta_json)
 #%%
 if len(demos_to_add_to_base_paths) > 0:
-    merge_demos_into_base_demo(base_demo_path, demos_to_add_to_base_paths)
+    merge_demos_into_base_demo(base_demo_path, demos_to_add_to_base_paths, delete_merged_demos=True, create_copy_of_base_demo=False)
 
 # ###########################
 # change the dataset name and location
