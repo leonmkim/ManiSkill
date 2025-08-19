@@ -40,6 +40,8 @@ def recursive_append_new_demo_data(base_demo, new_demo, copy_over_n_chunks_at_a_
                 end = min(i + copy_over_n_chunks_at_a_time, new_demo[key].shape[0])
                 base_demo[key].append(new_demo[key][start:end])
         elif isinstance(base_demo[key], ZarrGroup):
+            if key == 'episode_data': # ignore episode data
+                continue
             recursive_append_new_demo_data(base_demo[key], new_demo[key])
 
 def recursive_trim_trimmed_arrays(demo_data: ZarrGroup, 
@@ -292,12 +294,19 @@ def trim_start_and_end_of_trajectories_in_new_dataset(demo: ZarrGroup,
         json.dump(meta_json, f, indent=4)
 
 def recursive_assert_structure(base_demo, new_demo):
-    assert set(base_demo.keys()) == set(new_demo.keys()), f"Keys mismatch: {set(base_demo.keys())} vs {set(new_demo.keys())}"
+    base_demo_keys = set(base_demo.keys())
+    new_demo_keys = set(new_demo.keys())
+    # remove episode_data
+    base_demo_keys.discard('episode_data')
+    new_demo_keys.discard('episode_data')
+    assert base_demo_keys == new_demo_keys, f"Keys mismatch: {base_demo_keys} vs {new_demo_keys}"
     for key in base_demo.keys():
         if isinstance(base_demo[key], ZarrArray):
             assert base_demo[key].shape[1:] == new_demo[key].shape[1:], f"Shape mismatch for {key}: {base_demo[key].shape[1:]} vs {new_demo[key].shape[1:]}"
             assert base_demo[key].dtype == new_demo[key].dtype, f"Type mismatch for {key}: {base_demo[key].dtype} vs {new_demo[key].dtype}"
         elif isinstance(base_demo[key], ZarrGroup):
+            if key == 'episode_data': # ignore episode data
+                continue
             recursive_assert_structure(base_demo[key], new_demo[key])
 
 def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths: list, delete_merged_demos: bool = False):
@@ -435,7 +444,9 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 #%%
 # # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_111025.zarr')
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr')
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/5_sim_all_demos_peginsertion_20hz_act/demos.zarr')
 
 zarr_store = zarr.open(base_demo_path, mode='r')
 
@@ -443,10 +454,10 @@ from mani_skill.utils.visualization import images_to_video
 episode_idx = 2
 episode_start = zarr_store['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
 episode_end = zarr_store['meta']['episode_ends'][episode_idx]
-# images = zarr_store['data']['observation.rgb'][episode_start:episode_end]
-images = zarr_store['episode_data'][f'episode_{episode_idx}']['sam2-hiera-base-plus']['observation.EE_obj_mask'][:]
-images *= 255
-images = images.astype(np.uint8)
+images = zarr_store['data']['observation.rgb'][episode_start:episode_end]
+# images = zarr_store['episode_data'][f'episode_{episode_idx}']['sam2-hiera-base-plus']['observation.EE_obj_mask'][:]
+# images *= 255
+# images = images.astype(np.uint8)
 #%%
 # wrenches = zarr_store['data']['observation.end_effector_external_wrench_in_world'][episode_start:episode_end]
 # import matplotlib.pyplot as plt
@@ -465,7 +476,7 @@ images = images.astype(np.uint8)
 images_to_video(
     images=images,
     output_dir='./',
-    video_name=f'episode_{episode_idx}_estimated_mask_video',
+    video_name=f'episode_{episode_idx}_video',
     fps=20,
 )
 #%%
@@ -575,14 +586,15 @@ images_to_video(
 # trim each dataset using thresholds on velocity and gripper action
 # #################################################################################
 
-dataset_name = 'sim_recovery_demos_peginsertion_20hz_act'
+dataset_name = 'sim_all_demos_peginsertion_20hz_act'
+# dataset_name = 'sim_recovery_demos_peginsertion_20hz_act'
 dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
 # dataset_root_dir = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1')
 
-demos_to_trim = [
-    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_112731.zarr'),
-]
-# demos_to_trim = list()
+# demos_to_trim = [
+#     Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_112731.zarr'),
+# ]
+demos_to_trim = list()
 for demo_path in demos_to_trim:
     assert demo_path.exists()
     demo_path = demo_path.expanduser()
@@ -608,14 +620,18 @@ for path_to_demo in demos_to_trim:
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_175948_trimmed.zarr')
 # base_demo_path = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/700_sim_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act_copy/demos.zarr')
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_112731_trimmed.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_112731_trimmed.zarr')
+
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_112731_trimmed.zarr')
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
 
 assert base_demo_path.exists()
 base_demo_path = base_demo_path.expanduser()
-# demos_to_add_to_base_paths = [
-#     Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/532_sim_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act/demos.zarr'),
-# ]
-demos_to_add_to_base_paths = list()
+demos_to_add_to_base_paths = [
+    # Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/532_sim_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act/demos.zarr'),
+    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr'),
+]
+# demos_to_add_to_base_paths = list()
 
 for demo_path in demos_to_add_to_base_paths:
     assert demo_path.exists()
