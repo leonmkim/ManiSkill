@@ -118,9 +118,10 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_name):
         randomize_radius: bool = True
         radius_randomization_bounds: list = field(default_factory=lambda: [0.015, 0.03])  # default peg radius is .02m
         '''
-        max_grasped_object_length_x = 0.210 + .0025
+        # max_grasped_object_length_x = 0.210 + .0025
+        max_grasped_object_length_x = 0.42 + .0025
         max_grasped_object_width_y = 0.06 + .0025
-        max_grasped_object_height_z = 0.55 + .0025
+        max_grasped_object_height_z = 0.055 + .0025
     else:
         raise ValueError(f"Unknown task name: {task_name}")
     mask_predictor = MaskPredictor(hf_pretrained_model_name=hf_pretrained_model_name, device=device, 
@@ -145,7 +146,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_name):
     episode_data_mask_array_name = episode_data_mask_group_name + '/observation.EE_obj_mask'
 
     #%%
-    mask_input_dict = MaskInputDict(enable=True, mask_list=['EE_obj_mask'], representation='channels', segmentation_model_name='gt_segmentation')
+    mask_input_dict = MaskInputDict(enable=False, mask_list=['EE_obj_mask'], representation='channels', segmentation_model_name='gt_segmentation')
     observation_cfg = VisualFeatureSet(use_color=True, use_depth=True, mask_input_dict=mask_input_dict, use_contact_map=False, use_sdf_maps=False, use_normals_maps=False, use_contact_forces_map=False)
     action_horizon_length = 1
     action_history_length = 1
@@ -187,9 +188,9 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_name):
     for i, batch in tqdm(enumerate(dataloader)):
     # batch = next(iter(dataloader))
         # i = 0
-        if i == 0 and task_name == 'peg_insertion':
-            initial_gt_mask = batch['observation.EE_obj_mask'][0,0,0].cpu().numpy()
-            assert initial_gt_mask.ndim == 2, "Initial ground truth mask is not 2D"
+        # if i == 0 and task_name == 'peg_insertion':
+        #     initial_gt_mask = batch['observation.EE_obj_mask'][0,0,0].cpu().numpy()
+        #     assert initial_gt_mask.ndim == 2, "Initial ground truth mask is not 2D"
         color_image = einops.rearrange(batch['observation.rgb'][0,0], 'c h w -> h w c').cpu().numpy()
         depth_image = einops.rearrange(batch['observation.depth'][0,0], 'c h w -> h w c').cpu().numpy()
         EE_pose = batch['observation.state'][0,0,:7].cpu().numpy()
@@ -198,10 +199,10 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_name):
         if i == 0: #initialize cutie
             # mask = batch['observation.EE_obj_mask'][0,0,0].cpu().numpy()
             # mask = mask_predictor.start_mask_tracking_from_mask(color_image, mask)
-            if task_name == 'peg_insertion':
-                mask = mask_predictor.start_mask_tracking_from_mask(color_image, initial_gt_mask)
-            else:
-                mask = mask_predictor.start_mask_tracking(color_image, depth_image, camera_K, cam_tf_world, EE_pose, gripper_width)
+            # if task_name == 'peg_insertion':
+            #     mask = mask_predictor.start_mask_tracking_from_mask(color_image, initial_gt_mask)
+            # else:
+            mask = mask_predictor.start_mask_tracking(color_image, depth_image, camera_K, cam_tf_world, EE_pose, gripper_width)
         else:
             # with torch.inference_mode(), torch.autocast(device, dtype=torch.bfloat16):
             #     out_obj_ids, out_mask_logits = sam2_online_predictor.track(color_image)
