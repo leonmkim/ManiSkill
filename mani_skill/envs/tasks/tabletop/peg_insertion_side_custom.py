@@ -34,6 +34,7 @@ from colormath2.color_objects import sRGBColor, LabColor
 from colormath2.color_conversions import convert_color
 from colormath2.color_diff import delta_e_cie2000
 
+
 #%%
 def get_peg_primitive_mesh_list(peg_length, peg_width, peg_height, global_transform=None):
     full_sizes = [
@@ -213,13 +214,13 @@ class PegConfig:
     """
     randomize_color: bool = False
 
-    randomize_length: bool = True
+    randomize_length: bool = False
     nominal_length: float = 0.105  # default peg length is .105m
     length_randomization_bounds: list = field(default_factory=lambda: [0.085, 0.125])  # default peg length is .105m
 
     nominal_radius: float = 0.02  # default peg radius is .02m
     randomize_radius: bool = True
-    radius_randomization_bounds: list = field(default_factory=lambda: [0.015, 0.0325])  # default peg radius is .02m
+    radius_randomization_bounds: list = field(default_factory=lambda: [0.015, 0.03])  # default peg radius is .02m
 
     def __post_init__(self):
         if self.randomize_length:
@@ -410,6 +411,7 @@ class PegInsertionSideCustomEnv(BaseEnv):
                 box_centers = np.zeros((self.num_envs, 2))
 
             self.box_centers = common.to_tensor(box_centers)
+            assert self.box_centers.shape == (self.num_envs, 2), f"Box centers shape {self.box_centers.shape} does not match num_envs {self.num_envs}"
 
             # save some useful values for use later
             self.peg_half_sizes = common.to_tensor(np.vstack([peg_half_lengths, peg_radii, peg_radii])).T
@@ -424,7 +426,11 @@ class PegInsertionSideCustomEnv(BaseEnv):
                 clearances = common.to_numpy(self._batched_episode_rng.uniform(self.box_config.tolerance_randomization_bounds[0], self.box_config.tolerance_randomization_bounds[1]))
             else:
                 clearances = np.ones(self.num_envs) * self.box_config.nominal_tolerance
+            self.box_hole_clearances = common.to_tensor(clearances)
             self.box_hole_inner_radii = common.to_tensor(peg_radii + clearances)
+
+            self.box_sizes = common.to_tensor(np.vstack([peg_radii+clearances, peg_half_lengths, peg_half_lengths]).T)
+            assert self.box_sizes.shape == (self.num_envs, 3)
 
             # in each parallel env we build a different box with a hole and peg (the task is meant to be quite difficult)
             pegs = []
@@ -438,6 +444,8 @@ class PegInsertionSideCustomEnv(BaseEnv):
                 box_colors = np.ones((self.num_envs, 4))
                 box_color = sapien_utils.hex2rgba("#FFD289")
                 box_colors[:] = box_color
+            self.box_colors = common.to_tensor(box_colors)
+            assert self.box_colors.shape == (self.num_envs, 4)
 
             for i in range(self.num_envs):
                 scene_idxs = [i]
@@ -682,6 +690,22 @@ class PegInsertionSideCustomEnv(BaseEnv):
         # and simply store it after _initialize_episode or set_state_dict calls.
         return self.box.pose * self.box_hole_offsets * self.peg_head_offsets.inv()
 
+    @property
+    def peg_info(self):
+        info_dict = dict()
+        info_dict['sizes'] = self.peg_half_sizes
+        info_dict['mass'] = self.peg.mass
+        return info_dict
+
+    @property
+    def box_info(self):
+        info_dict = dict()
+        info_dict['sizes'] = self.box_sizes # inner_radius, outer_radius, depth
+        info_dict['centers'] = self.box_centers # 2D center
+        info_dict['colors'] = self.box_colors
+        info_dict['hole_clearances'] = self.box_hole_clearances # b
+        return info_dict
+
     def has_peg_inserted(self):
         # Only head position is used in fact
         peg_head_pos_at_hole = (self.box_hole_pose.inv() * self.peg_head_pose).p
@@ -729,7 +753,6 @@ class PegInsertionSideCustomEnv(BaseEnv):
         success, peg_head_pos_at_hole = self.has_peg_inserted()
         peg_is_possibly_grasped = self.peg_is_possibly_grasped
         return dict(success=success, peg_head_pos_at_hole=peg_head_pos_at_hole, peg_is_possibly_grasped=peg_is_possibly_grasped)
-
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
         # Stage 1: Encourage gripper to be rotated to be lined up with the peg

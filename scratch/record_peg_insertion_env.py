@@ -17,8 +17,6 @@ from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
 from mani_skill.envs.tasks.tabletop.book_insertion import GraspedBookConfig, BookEndsConfig, EnvBooksConfig, SlotConfig
 
-from pathlib import Path
-
 import cv2
 
 import time
@@ -27,14 +25,19 @@ from mani_skill.utils.teleoperation import SpacemouseInput
 
 import logging
 record_logger = logging.getLogger("record_logger")
+from pathlib import Path
 #%%
-path_to_demo = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250606_154009.zarr")
-import zarr
-demo = zarr.open(path_to_demo, mode='r')
+# import zarr
+# # path_to_zarr_demo = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250817_164758.zarr")
+# path_to_zarr_demo = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_091756.zarr")
+# path_to_zarr_demo = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_111025.zarr")
 
+# zarr_store = zarr.open(path_to_zarr_demo, mode='r')
+# import matplotlib.pyplot as plt
+# segmentation_map = zarr_store['data']['gt_segmentation']['observation.EE_obj_mask'][80]
+# plt.imshow(segmentation_map)
 #%%
-spacemouse_input = SpacemouseInput(sixd_mask=[0,1,1,1,0,0])
-# spacemouse_input = SpacemouseInput(sixd_mask=[0,0,0,1,1,0])
+spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,0,0,1])
 desired_viewing_size = (256, 256)
 output_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop")
 record_demonstrations = True
@@ -46,7 +49,7 @@ joint_stiffness = 100.0
 joint_damping = 2*np.sqrt(joint_stiffness)
 env = gym.make(
     # "LiftPegUpright-v1", 
-    "BookInsertion-v0", 
+    "PegInsertionSideCustom-v1", 
     cam_resize_factor=0.5,
     reward_mode="none", 
     sim_backend='physx_cpu', 
@@ -55,38 +58,10 @@ env = gym.make(
     render_backend="gpu",
     obs_mode="rgb+depth+segmentation",
     render_contact_map=True,
+    render_contact_forces_map=True,
     render_dtc_maps=False,
     render_normals_maps=False,
-    suppress_evaluation=True,
-    book_ends_config=BookEndsConfig(
-        mode='spring',
-        height=0.25,
-        wall_height=0.25,
-        mass=1.0,
-        friction=0.0,
-        color="#808080", # default color
-        joint_stiffness=joint_stiffness, 
-        joint_damping=joint_damping,
-        travel_limit=0.125,
-    ),
-    grasped_book_config=GraspedBookConfig(
-        randomize_color=True,
-        randomize_density=False,
-        randomize_length=False,
-        randomize_height=True,
-        randomize_width=True,
-    ),
-    env_books_config=EnvBooksConfig(
-        randomize_color=False,
-        randomize_density=False,
-        randomize_height=False,
-        randomize_length=False,
-        randomize_width=False,
-    ),
-    slot_config=SlotConfig(
-        y_randomization_bounds=[-0.05, 0.05],
-        # y_randomization_bounds=0.0,
-    ),
+    suppress_evaluation=False,
     # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
     # control_mode="pd_ee_delta_pose",
@@ -115,15 +90,15 @@ if record_demonstrations:
         save_video=record_video,
         save_trajectory=True,
         info_on_video=False,
-        record_reward=False,
+        record_reward=True,
         video_fps=20,
         source_type="teleoperation",
         source_desc="teleoperation via spacemouse",
-        save_grasped_book_info=True,
-        save_env_book_info=True,
-        grasped_object_name='grasped_book'
+        save_peg_info=True,
+        save_box_info=True,
+        grasped_object_name='peg'
     )
-seed = 0
+seed = 638
 num_trajs = 0
 #%%
 sim_dt = 1.0 / env.sim_config.sim_freq

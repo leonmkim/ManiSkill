@@ -287,17 +287,24 @@ class RecordEpisodeZarr(gym.Wrapper):
         action_plan_length: Optional[int] = None,
         save_grasped_book_info: bool = False,
         save_env_book_info: bool = False,
+        save_peg_info: bool = False,
+        save_box_info: bool = False,
         record_action_history: bool = False,
         action_history_length: Optional[int] = None,
         record_generator_state: bool = False,
+        grasped_object_name: Optional[str] = None,
     ) -> None:
         super().__init__(env)
+        self.grasped_object_name = grasped_object_name
         self.record_action_history = record_action_history
         self.action_history_length = action_history_length
         self.record_generator_state = record_generator_state
 
         self.save_grasped_book_info = save_grasped_book_info
         self.save_env_book_info = save_env_book_info
+        self.save_peg_info = save_peg_info
+        self.save_box_info = save_box_info
+
         self.record_action_plan = record_action_plan
         self.action_plan_length = action_plan_length
         self.current_env_seed = None
@@ -467,6 +474,12 @@ class RecordEpisodeZarr(gym.Wrapper):
         
             contact_positions_shape = obs['extra']['extrinsic_contact_positions'].shape[2:]
             data_group.create_array('observation.contact_positions', shape=(0,) + (self.num_envs,) + contact_positions_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + contact_positions_shape, overwrite=True)#, compressor=self.zarr_compressor)
+
+        if self.env.render_contact_forces_map:
+            data_group.create_array('observation.contact_forces_map', shape=(0,) + (self.num_envs,) + image_obs_shape + (3,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + image_obs_shape + (3,), overwrite=True)
+
+            contact_forces_shape = obs['extra']['extrinsic_contact_forces'].shape[2:]
+            data_group.create_array('observation.contact_forces', shape=(0,) + (self.num_envs,) + contact_forces_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + contact_forces_shape, overwrite=True)
             
         current_pose_shape = obs['extra']['end_effector_pose'].shape[2:]
         state_shape = list(current_pose_shape)
@@ -474,7 +487,8 @@ class RecordEpisodeZarr(gym.Wrapper):
         state_shape = tuple(state_shape)
         data_group.create_array('observation.state', shape=(0,) + (self.num_envs,) + state_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + state_shape, overwrite=True)#, compressor=self.zarr_compressor)
         data_group.create_array('observation.EE_pixel_coord', shape=(0,) + (self.num_envs,) + (2,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (2,), overwrite=True)#, compressor=self.zarr_compressor)
-        
+        data_group.create_array('observation.end_effector_external_wrench_in_world', shape=(0,) + (self.num_envs,) + (6,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (6,), overwrite=True)#, compressor=self.zarr_compressor)
+
         target_pose_shape = obs['agent']['controller']['arm']['target_pose'].shape[2:]
         data_group.create_array('observation.target_pose', shape=(0,) + (self.num_envs,) + target_pose_shape, dtype=np.float32, chunks=(1,) + (self.num_envs,) + target_pose_shape, overwrite=True)#, compressor=self.zarr_compressor)
 
@@ -538,6 +552,24 @@ class RecordEpisodeZarr(gym.Wrapper):
             meta_group.create_array('episode_env_books_masses', shape=(0,) + (self.num_envs,) + (num_env_books,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (num_env_books,), overwrite=True)#, compressor=self.zarr_compressor)
             meta_group['episode_env_books_masses'].append(env_books_info['masses'].unsqueeze(0).cpu().numpy())
 
+        if self.save_peg_info:
+            peg_info = self.env.peg_info
+            meta_group.create_array('episode_peg_sizes', shape=(0,) + (self.num_envs,) + (3,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (3,), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_peg_sizes'].append(peg_info['sizes'].unsqueeze(0).cpu().numpy())
+            meta_group.create_array('episode_peg_mass', shape=(0,) + (self.num_envs,), dtype=np.float32, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_peg_mass'].append(peg_info['mass'].unsqueeze(0).cpu().numpy())
+        
+        if self.save_box_info:
+            box_info = self.env.box_info
+            meta_group.create_array('episode_box_sizes', shape=(0,) + (self.num_envs,) + (3,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (3,), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_box_sizes'].append(box_info['sizes'].unsqueeze(0).cpu().numpy())
+            meta_group.create_array('episode_box_centers', shape=(0,) + (self.num_envs,) + (2,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (2,), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_box_centers'].append(box_info['centers'].unsqueeze(0).cpu().numpy())
+            meta_group.create_array('episode_box_colors', shape=(0,) + (self.num_envs,) + (4,), dtype=np.float32, chunks=(1,) + (self.num_envs,) + (4,), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_box_colors'].append(box_info['colors'].unsqueeze(0).cpu().numpy())
+            meta_group.create_array('episode_box_hole_clearances', shape=(0,) + (self.num_envs,), dtype=np.float32, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
+            meta_group['episode_box_hole_clearances'].append(box_info['hole_clearances'].unsqueeze(0).cpu().numpy())
+
         # meta_group.create_array('episode_start_idx', shape=(0,) + (self.num_envs,), dtype=np.int32, chunks=(1,) + (self.num_envs,), overwrite=True)#, compressor=self.zarr_compressor)
 
         if env_state_dict is not None:
@@ -560,6 +592,10 @@ class RecordEpisodeZarr(gym.Wrapper):
             trajectory_buffer_data_group['observation.contact_map'].append(obs['extra']['extrinsic_contact_map'])
             trajectory_buffer_data_group['observation.contact_positions'].append(obs['extra']['extrinsic_contact_positions'])
 
+        if self.env.render_contact_forces_map:
+            trajectory_buffer_data_group['observation.contact_forces_map'].append(obs['extra']['extrinsic_contact_forces_map'])
+            trajectory_buffer_data_group['observation.contact_forces'].append(obs['extra']['extrinsic_contact_forces'])
+
         current_pose = obs['extra']['end_effector_pose']
         gripper_width = np.sum(obs['agent']['qpos'][:,:,-2:], axis=-1, keepdims=True)
         state = np.concatenate([current_pose, gripper_width], axis=-1)
@@ -567,6 +603,7 @@ class RecordEpisodeZarr(gym.Wrapper):
 
         trajectory_buffer_data_group['observation.target_pose'].append(obs['agent']['controller']['arm']['target_pose'])
         trajectory_buffer_data_group['observation.EE_pixel_coord'].append(obs['extra']['end_effector_pixel_coordinates'])
+        trajectory_buffer_data_group['observation.end_effector_external_wrench_in_world'].append(obs['extra']['W_FT_EE'])
 
         trajectory_buffer_data_group['action'].append(action)
         if self.record_action_plan:
@@ -616,7 +653,8 @@ class RecordEpisodeZarr(gym.Wrapper):
         if 'success' in trajectory_buffer_data_group:
             if success is None:
                 success = np.zeros((1, self.num_envs), dtype=bool)
-            trajectory_buffer_data_group['success'].append(np.zeros((1, self.num_envs), dtype=bool))
+            # trajectory_buffer_data_group['success'].append(np.zeros((1, self.num_envs), dtype=bool))
+            trajectory_buffer_data_group['success'].append(success)
     
         if 'fail' in trajectory_buffer_data_group:
             if fail is None:
@@ -952,7 +990,8 @@ class RecordEpisodeZarr(gym.Wrapper):
         if 'observation.EE_obj_mask' not in trajectory_data_buffer:
             trajectory_data_buffer.create_array('observation.EE_obj_mask', shape=(0,) + (self.num_envs,) + image_shape, dtype=np.uint8, chunks=(1,) + (self.num_envs,) + image_shape, overwrite=True)#, compressor=self.zarr_compressor)
 
-        EE_obj_mask = (trajectory_data_buffer['observation.segmentation'][:] == segmentation_id_map[f"{self.env.grasped_book.name}_0"]).astype(np.uint8)
+        # EE_obj_mask = (trajectory_data_buffer['observation.segmentation'][:] == segmentation_id_map[f"{self.env.grasped_book.name}_0"]).astype(np.uint8)
+        EE_obj_mask = (trajectory_data_buffer['observation.segmentation'][:] == segmentation_id_map[f"{self.grasped_object_name}_0"]).astype(np.uint8)
         trajectory_data_buffer['observation.EE_obj_mask'].append(EE_obj_mask)
 
     def flush_trajectory(
@@ -1130,6 +1169,13 @@ class RecordEpisodeZarr(gym.Wrapper):
                     self.move_zarr_array_to_new_group(self._trajectory_buffer['data'], self._trajectory_buffer['data']['gt_contact'], 'observation.contact_map')
                     self.move_zarr_array_to_new_group(self._trajectory_buffer['data'], self._trajectory_buffer['data']['gt_contact'], 'observation.contact_positions')
 
+                if self.env.render_contact_forces_map:
+                    if 'gt_contact' not in self._trajectory_buffer['data']:
+                        self._trajectory_buffer['data'].create_group('gt_contact')
+                    
+                    self.move_zarr_array_to_new_group(self._trajectory_buffer['data'], self._trajectory_buffer['data']['gt_contact'], 'observation.contact_forces_map')
+                    self.move_zarr_array_to_new_group(self._trajectory_buffer['data'], self._trajectory_buffer['data']['gt_contact'], 'observation.contact_forces')
+
                 # move segmentation masks to new 'gt_segmentation' group
                 if 'segmentation' in self.env.obs_mode:
                     if 'gt_segmentation' not in self._trajectory_buffer['data']:
@@ -1178,6 +1224,28 @@ class RecordEpisodeZarr(gym.Wrapper):
                     if 'episode_env_books_masses' not in self.meta_group:
                         self.meta_group.create_array('episode_env_books_masses', shape=(0,) + (num_env_books,), dtype=np.float32, chunks=(1,) + (num_env_books,), overwrite=True)
                     self.meta_group['episode_env_books_masses'].append(self._trajectory_buffer['meta']['episode_env_books_masses'][:, env_idx]) # Txnum_envsxnum_env_booksx1
+                
+                if self.save_peg_info:
+                    if 'episode_peg_sizes' not in self.meta_group:
+                        self.meta_group.create_array('episode_peg_sizes', shape=(0,) + (3,), dtype=np.float32, chunks=(1,) + (3,), overwrite=True)
+                    self.meta_group['episode_peg_sizes'].append(self._trajectory_buffer['meta']['episode_peg_sizes'][:, env_idx]) # Txnum_envsx3
+                    if 'episode_peg_mass' not in self.meta_group:
+                        self.meta_group.create_array('episode_peg_mass', shape=(0,), dtype=np.float32, chunks=(1,), overwrite=True)
+                    self.meta_group['episode_peg_mass'].append(self._trajectory_buffer['meta']['episode_peg_mass'][:, env_idx]) # Txnum_envsx1
+                
+                if self.save_box_info:
+                    if 'episode_box_sizes' not in self.meta_group:
+                        self.meta_group.create_array('episode_box_sizes', shape=(0,) + (3,), dtype=np.float32, chunks=(1,) + (3,), overwrite=True)
+                    self.meta_group['episode_box_sizes'].append(self._trajectory_buffer['meta']['episode_box_sizes'][:, env_idx]) # Txnum_envsx3
+                    if 'episode_box_colors' not in self.meta_group:
+                        self.meta_group.create_array('episode_box_colors', shape=(0,) + (4,), dtype=np.float32, chunks=(1,) + (4,), overwrite=True)
+                    self.meta_group['episode_box_colors'].append(self._trajectory_buffer['meta']['episode_box_colors'][:, env_idx]) # Txnum_envsx4
+                    if 'episode_box_centers' not in self.meta_group:
+                        self.meta_group.create_array('episode_box_centers', shape=(0,) + (2,), dtype=np.float32, chunks=(1,) + (2,), overwrite=True)
+                    self.meta_group['episode_box_centers'].append(self._trajectory_buffer['meta']['episode_box_centers'][:, env_idx]) # Txnum_envsx2
+                    if 'episode_box_hole_clearances' not in self.meta_group:
+                        self.meta_group.create_array('episode_box_hole_clearances', shape=(0,), dtype=np.float32, chunks=(1,), overwrite=True)
+                    self.meta_group['episode_box_hole_clearances'].append(self._trajectory_buffer['meta']['episode_box_hole_clearances'][:, env_idx]) # Txnum_envsx1
 
                 # NOTE: done and env states are not trimmed
 

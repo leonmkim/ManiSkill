@@ -56,7 +56,7 @@ def recursive_trim_trimmed_arrays(demo_data: ZarrGroup,
             else:
                 demo_data[f'{key}_tmp'].append(demo_data[key][new_untrimmed_episode_start:new_untrimmed_episode_end])
         elif isinstance(demo_data[key], ZarrGroup):
-            if key in ['actors', 'articulations']:
+            if key in ['actors', 'articulations', 'controller', 'arm']:
                 recursive_trim_trimmed_arrays(demo_data[key], new_episode_start, new_episode_end, new_untrimmed_episode_start, new_untrimmed_episode_end, pretrimmed=False)
             else:
                 recursive_trim_trimmed_arrays(demo_data[key], new_episode_start, new_episode_end, new_untrimmed_episode_start, new_untrimmed_episode_end, pretrimmed=True)
@@ -78,7 +78,7 @@ def recursive_trim_trimmed_arrays_to_new_demo(demo_data: ZarrGroup,
         elif isinstance(demo_data[key], ZarrGroup):
             if key not in new_demo_data:
                 new_demo_data.create_group(key)
-            if key in ['actors', 'articulations']:
+            if key in ['actors', 'articulations', 'controller', 'arm']:
                 recursive_trim_trimmed_arrays_to_new_demo(demo_data[key], new_demo_data[key], new_episode_start, new_episode_end, new_untrimmed_episode_start, new_untrimmed_episode_end, pretrimmed=False)
             else:
                 recursive_trim_trimmed_arrays_to_new_demo(demo_data[key], new_demo_data[key], new_episode_start, new_episode_end, new_untrimmed_episode_start, new_untrimmed_episode_end, pretrimmed=True)
@@ -101,6 +101,7 @@ def rename_zarr_array(demo_data: ZarrGroup, old_key: str, new_key: str, copy_ove
             start = i
             end = min(i + copy_over_n_chunks_at_a_time, demo_data[old_key].shape[0])
             demo_data[new_key].append(demo_data[old_key][start:end])
+        assert demo_data[old_key].shape == demo_data[new_key].shape, f"demo_data[old_key].shape: {demo_data[old_key].shape} != demo_data[new_key].shape: {demo_data[new_key].shape}"
         del demo_data[old_key]
     else:
         raise KeyError(f"{old_key} not found in {demo_data.name}")
@@ -411,7 +412,7 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
                         demo_data[f'{key}_tmp'].append(demo_data[key][env_state_to_remove_end_idx:])
                     assert demo_data[f'{key}_tmp'].shape[0] == demo_data[key].shape[0] - (env_state_to_remove_end_idx - env_state_to_remove_start_idx), f"demo_data[f'{key}_tmp'].shape[0]: {demo_data[f'{key}_tmp'].shape[0]} != demo_data[key].shape[0] - (to_remove_end_idx - to_remove_start_idx): {demo_data[key].shape[0] - (env_state_to_remove_end_idx - env_state_to_remove_start_idx)}"
         elif isinstance(demo_data[key], ZarrGroup):
-            if key in ['actors', 'articulations']:
+            if key in ['actors', 'articulations', 'controller', 'arm']:
                 correct_faulty_trimming(demo_data[key], to_remove_start_idx, to_remove_end_idx, env_state_to_remove_start_idx, env_state_to_remove_end_idx, env_state_array=True)
             else:
                 correct_faulty_trimming(demo_data[key], to_remove_start_idx, to_remove_end_idx, env_state_to_remove_start_idx, env_state_to_remove_end_idx, env_state_array=False)
@@ -432,7 +433,42 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 
 # traverse_tree(demo)
 #%%
-# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250509_162111.zarr')
+# # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_111025.zarr')
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
+
+zarr_store = zarr.open(base_demo_path, mode='r')
+
+from mani_skill.utils.visualization import images_to_video
+episode_idx = 2
+episode_start = zarr_store['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
+episode_end = zarr_store['meta']['episode_ends'][episode_idx]
+# images = zarr_store['data']['observation.rgb'][episode_start:episode_end]
+images = zarr_store['episode_data'][f'episode_{episode_idx}']['sam2-hiera-base-plus']['observation.EE_obj_mask'][:]
+images *= 255
+images = images.astype(np.uint8)
+#%%
+# wrenches = zarr_store['data']['observation.end_effector_external_wrench_in_world'][episode_start:episode_end]
+# import matplotlib.pyplot as plt
+# plt.figure(figsize=(10, 5))
+# plt.plot(wrenches[:, 0], label='Force X')
+# plt.plot(wrenches[:, 1], label='Force Y')
+# plt.plot(wrenches[:, 2], label='Force Z')
+# plt.xlabel('Time Step')
+# plt.ylabel('Force (N)')
+# plt.title('End Effector External Wrench')
+# plt.legend()
+# plt.grid()
+# plt.show()
+#%%
+
+images_to_video(
+    images=images,
+    output_dir='./',
+    video_name=f'episode_{episode_idx}_estimated_mask_video',
+    fps=20,
+)
+#%%
 # assert base_demo_path.exists()
 # # # # # base_demo_num_episodes = 10
 # base_demo = zarr.open(base_demo_path, 'r')
@@ -539,12 +575,12 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 # trim each dataset using thresholds on velocity and gripper action
 # #################################################################################
 
-dataset_name = 'sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act'
+dataset_name = 'sim_recovery_demos_peginsertion_20hz_act'
 dataset_root_dir = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop')
 # dataset_root_dir = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1')
 
 demos_to_trim = [
-    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250606_154553.zarr'),
+    Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_112731.zarr'),
 ]
 # demos_to_trim = list()
 for demo_path in demos_to_trim:
@@ -572,7 +608,7 @@ for path_to_demo in demos_to_trim:
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/206_sim_demos_leftof4thbook_springbookends_nograspedrand_noenvrand_slotrand_20hz_act/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250428_175948_trimmed.zarr')
 # base_demo_path = Path('/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/700_sim_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act_copy/demos.zarr')
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250606_154553_trimmed.zarr')
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_112731_trimmed.zarr')
 
 assert base_demo_path.exists()
 base_demo_path = base_demo_path.expanduser()
