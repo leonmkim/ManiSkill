@@ -41,13 +41,13 @@ path_to_FISH = path_to_fish_leon / "FISH"
 assert path_to_FISH.exists(), f"Path {path_to_FISH} does not exist. Please check the path."
 sys.path.append(str(path_to_FISH))
 from agent.encoder import VisualFeatureSet
-from lerobot.common.policies.diffusion.configuration_diffusion import ActionConfig, ActionHistoryConfig
+from lerobot.common.policies.diffusion.configuration_diffusion import ActionConfig, ActionHistoryConfig, EndEffectorWrenchHistoryConfig
 from agent.encoder import MaskInputDict
 from dataset.expert_dataset import ExpertDatasetZarr
 # #%%
-path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
-path_to_zarr = path_to_demo_root_dir / "2_demo_test" / "demos.zarr"
-zarr_store = zarr.open(str(path_to_zarr), mode='r')
+# path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
+# path_to_zarr = path_to_demo_root_dir / "2_demo_test" / "demos.zarr"
+# zarr_store = zarr.open(str(path_to_zarr), mode='r')
 #%%
 # path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
 # demo_name = "1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act"
@@ -255,16 +255,18 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
     #%%
     mask_input_dict = MaskInputDict(enable=contact_estimation_model.contact_model_uses_mask, mask_list=['EE_obj_mask'], representation='channels', segmentation_model_name=segmentation_model_name)
     # mask_input_dict = MaskInputDict(enable=contact_estimation_model.contact_model_uses_mask, mask_list=['EE_obj_mask'], representation='channels', segmentation_model_name='gt_segmentation')
-    observation_cfg = VisualFeatureSet(use_color=True, use_depth=True, mask_input_dict=mask_input_dict, use_contact_map=False, use_sdf_maps=False, use_normals_maps=False)
+    observation_cfg = VisualFeatureSet(use_color=True, use_depth=True, mask_input_dict=mask_input_dict, use_contact_map=False, use_sdf_maps=False, use_normals_maps=False, use_contact_forces_map=False)
     action_horizon_length = 1
     action_history_length = 1
     action_config = ActionConfig(horizon_length=action_horizon_length, action_frame_expression='delta', input_rotation_representation='euler_angles')
     action_history_config = ActionHistoryConfig(enable=False, history_length=action_history_length, action_frame_expression='delta', action_frame='current_end_effector', rotation_representation='euler_angles')
+    end_effector_wrench_history_config = EndEffectorWrenchHistoryConfig(enable=False)
     episode_dataset = ExpertDatasetZarr(path_to_zarr, 
                                         demos_idxs_list_or_num=[episode_idx], 
                                         observation_cfg=observation_cfg, 
                                         action_config=action_config, 
                                         action_history_config=action_history_config, 
+                                        end_effector_wrench_history_config=end_effector_wrench_history_config,
                                         action_key='action',
                                         n_obs_steps=1,
                                         load_to_memory=False,

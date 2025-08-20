@@ -372,8 +372,8 @@ def merge_demos_into_base_demo(base_demo_path: Path, demos_to_add_to_base_paths:
             post_process_logger.info(f"New demo {new_demo_path.name} has already been modified, skipping updating...")
 
         # first update episode_ends of new demo
-        # if not new_demo_already_modified:
-            # new_demo['meta']['episode_ends'][...] += last_episode_end_of_base_demo 
+        if not new_demo_already_modified:
+            new_demo['meta']['episode_ends'][...] += last_episode_end_of_base_demo
 
             # also update the ep_ids of the new demo
             # for i, episode_id in enumerate(new_demo['meta']['ep_ids'][:]):

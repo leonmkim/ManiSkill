@@ -33,7 +33,7 @@ import click
 
 import torchvision.transforms.v2 as T
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionRgbEncoder, _replace_submodules
-from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig, ActionConfig, ActionHistoryConfig
+from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig, ActionConfig, ActionHistoryConfig, EndEffectorWrenchHistoryConfig
 import torchvision
 from torch import nn
 
@@ -361,7 +361,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, theia_model_string, desi
     mask_input_dict = MaskInputDict(enable=False, mask_list=['EE_obj_mask'], representation='channels', segmentation_model_name='gt_segmentation')
     observation_cfg = VisualFeatureSet(use_color=True, use_depth=False, 
                                     mask_input_dict=mask_input_dict, 
-                                    use_contact_map=False, use_sdf_maps=False, use_normals_maps=False,
+                                    use_contact_map=False, use_sdf_maps=False, use_normals_maps=False, use_contact_forces_map=False,
                                     zero_centered=True, z_score_normalize_rgb=True,
                                     )
     # visual_preprocessor = VisualFeaturePreprocessor(
@@ -373,11 +373,13 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, theia_model_string, desi
     action_history_length = 1
     action_config = ActionConfig(horizon_length=action_horizon_length, action_frame_expression='delta', input_rotation_representation='euler_angles')
     action_history_config = ActionHistoryConfig(enable=False, history_length=action_history_length, action_frame_expression='delta', action_frame='current_end_effector', rotation_representation='euler_angles')
+    end_effector_wrench_history_config = EndEffectorWrenchHistoryConfig(enable=False)
     episode_dataset = ExpertDatasetZarr(path_to_zarr, 
                                         demos_idxs_list_or_num=[episode_idx], 
                                         observation_cfg=observation_cfg, 
                                         action_config=action_config, 
                                         action_history_config=action_history_config, 
+                                        end_effector_wrench_history_config=end_effector_wrench_history_config,
                                         action_key='action',
                                         n_obs_steps=1,
                                         load_to_memory=False,

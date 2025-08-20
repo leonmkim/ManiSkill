@@ -499,18 +499,18 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_gym_name, record_co
                 assert W_FT_EE.ndim == 2, f"expected W_FT_EE to have shape (B, 6), got {W_FT_EE.shape}"
                 assert W_FT_EE.shape[0] == 1, f"expected W_FT_EE to have shape (1, 6), got {W_FT_EE.shape}"
                 assert W_FT_EE.shape[1] == 6, f"expected W_FT_EE to have shape (1, 6), got {W_FT_EE.shape}"
-                zarr_episode_data['observation.end_effector_external_wrench_in_world'].append(W_FT_EE.cpu().numpy())
+                zarr_data['observation.end_effector_external_wrench_in_world'].append(W_FT_EE.cpu().numpy())
 
-        # frames.append(current_frame)
-        elapsed_timesteps = info["elapsed_steps"].item()
-        elapsed_simtime = elapsed_timesteps * sim_dt_bw_step
-        elapsed_realtime = time.perf_counter() - start_time
-        # time_to_sleep = sim_dt_bw_step - elapsed_time
-        time_to_sleep = elapsed_simtime - elapsed_realtime
-        # if time_to_sleep > 0:
-        #     time.sleep(time_to_sleep)
-        if elapsed_timesteps % 50 == 0:
-            print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
+        # # frames.append(current_frame)
+        # elapsed_timesteps = info["elapsed_steps"].item()
+        # elapsed_simtime = elapsed_timesteps * sim_dt_bw_step
+        # elapsed_realtime = time.perf_counter() - start_time
+        # # time_to_sleep = sim_dt_bw_step - elapsed_time
+        # time_to_sleep = elapsed_simtime - elapsed_realtime
+        # # if time_to_sleep > 0:
+        # #     time.sleep(time_to_sleep)
+        # if elapsed_timesteps % 50 == 0:
+        #     print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
     
     # assert zarr_gt_contact['observation.env_dtc_map'].shape[0] == episode_end_idx, f"mismatch in number of contact features: {zarr_gt_contact['observation.env_dtc_map'].shape[0]} vs {episode_end_idx}"
 

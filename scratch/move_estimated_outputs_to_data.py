@@ -41,7 +41,10 @@ from tqdm import tqdm
 #         slurm_array_string += f"{start_idx}-{end_idx}"
 # %%
 
-path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act/demos.zarr")
+# path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act/demos.zarr")
+# path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/638_sim_nominal_demos_peginsertion_20hz_act/demos.zarr")
+# path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/269_sim_recovery_demos_peginsertion_20hz_act/demos.zarr")
+path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/907_sim_all_demos_peginsertion_20hz_act/demos.zarr")
 # path_to_zarr = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/2_demo_test/demos.zarr")
 zarr_store = zarr.open(path_to_zarr, mode='r+')
 #%%
@@ -50,20 +53,32 @@ max_demo_length = episode_lengths.max()
 #%%
 zarr_store['meta'].attrs['max_demo_length'] = max_demo_length
 #%%
+gt_model_group_name = 'gt_contact'
+estimated_model_group_name = 'gt_contact'
+data_array_names_list = [
+    'observation.EE_dtc_map',
+    'observation.EE_normals_map',
+    'observation.env_dtc_map',
+    'observation.env_normals_map',
+]
+
 # gt_model_group_name = 'gt_segmentation'
 # estimated_model_group_name = 'sam2-hiera-base-plus'
 # mask_data_array_name = 'observation.EE_obj_mask'
+# data_array_names_list = [
+#     mask_data_array_name,
+# ]
 #%%
-estimated_model_group_name = 'theia-base-patch16-224-cdiv_15x20'
-x_norm_patchtokens_array_name = 'observation.x_norm_patchtokens'
-# x_norm_clstoken_array_name = 'observation.x_norm_clstoken'
-# x_norm_regtokens_array_name = 'observation.x_norm_regtokens'
-data_array_names_list = [
-    # mask_data_array_name,
-    x_norm_patchtokens_array_name,
-    # x_norm_clstoken_array_name,
-    # x_norm_regtokens_array_name
-]
+# estimated_model_group_name = 'theia-base-patch16-224-cdiv_15x20'
+# x_norm_patchtokens_array_name = 'observation.x_norm_patchtokens'
+# # x_norm_clstoken_array_name = 'observation.x_norm_clstoken'
+# # x_norm_regtokens_array_name = 'observation.x_norm_regtokens'
+# data_array_names_list = [
+#     # mask_data_array_name,
+#     x_norm_patchtokens_array_name,
+#     # x_norm_clstoken_array_name,
+#     # x_norm_regtokens_array_name
+# ]
 
 #%%
 # episode_idx = 639
