@@ -454,39 +454,47 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 # # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_111025.zarr')
 # # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
 # # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/20250818_111025.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/5_sim_all_demos_peginsertion_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/240_sim_demos_left_of_4th_book_bookends_no_env_rand_20hz_act/demos.zarr')
 
-# zarr_store = zarr.open(base_demo_path, mode='r')
+zarr_store = zarr.open(base_demo_path, mode='r')
+#%%
+from mani_skill.utils.visualization import images_to_video
+episode_idx = 1
+episode_start = zarr_store['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
+episode_end = zarr_store['meta']['episode_ends'][episode_idx]
+images = zarr_store['data']['observation.rgb'][episode_start:episode_end]
+# images = zarr_store['episode_data'][f'episode_{episode_idx}']['sam2-hiera-base-plus']['observation.EE_obj_mask'][:]
+# images *= 255
+# images = images.astype(np.uint8)
+images = zarr_store['episode_data'][f'episode_{episode_idx}']['gt_contact']['observation.env_normals_map'][:]
+images = ((images + 1) / 2) * 255
+images = images.astype(np.uint8)
+#%%
+# wrenches = zarr_store['data']['observation.end_effector_external_wrench_in_world'][episode_start:episode_end]
+# import matplotlib.pyplot as plt
+# plt.figure(figsize=(10, 5))
+# plt.plot(wrenches[:, 0], label='Force X')
+# plt.plot(wrenches[:, 1], label='Force Y')
+# plt.plot(wrenches[:, 2], label='Force Z')
+# plt.xlabel('Time Step')
+# plt.ylabel('Force (N)')
+# plt.title('End Effector External Wrench')
+# plt.legend()
+# plt.grid()
+# plt.show()
+#%%
 
-# from mani_skill.utils.visualization import images_to_video
-# episode_idx = 2
-# episode_start = zarr_store['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
-# episode_end = zarr_store['meta']['episode_ends'][episode_idx]
-# images = zarr_store['data']['observation.rgb'][episode_start:episode_end]
-# # images = zarr_store['episode_data'][f'episode_{episode_idx}']['sam2-hiera-base-plus']['observation.EE_obj_mask'][:]
-# # images *= 255
-# # images = images.astype(np.uint8)
-# #%%
-# # wrenches = zarr_store['data']['observation.end_effector_external_wrench_in_world'][episode_start:episode_end]
-# # import matplotlib.pyplot as plt
-# # plt.figure(figsize=(10, 5))
-# # plt.plot(wrenches[:, 0], label='Force X')
-# # plt.plot(wrenches[:, 1], label='Force Y')
-# # plt.plot(wrenches[:, 2], label='Force Z')
-# # plt.xlabel('Time Step')
-# # plt.ylabel('Force (N)')
-# # plt.title('End Effector External Wrench')
-# # plt.legend()
-# # plt.grid()
-# # plt.show()
-# #%%
-
-# images_to_video(
-#     images=images,
-#     output_dir='./',
-#     video_name=f'episode_{episode_idx}_video',
-#     fps=20,
-# )
+images_to_video(
+    images=images,
+    output_dir='./',
+    video_name=f'episode_{episode_idx}_env_normals_video',
+    fps=20,
+)
 #%%
 # assert base_demo_path.exists()
 # # # # # base_demo_num_episodes = 10

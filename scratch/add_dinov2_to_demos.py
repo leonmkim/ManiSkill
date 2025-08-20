@@ -11,12 +11,6 @@ import os
 
 import zarr
 ZARR_VERSION=int(zarr.__version__.split('.')[0])
-if ZARR_VERSION < 3:
-    from zarr.hierarchy import Group as ZarrGroup
-    from zarr.core import Array as ZarrArray
-else:
-    from zarr import Group as ZarrGroup
-    from zarr import Array as ZarrArray
 
 from pathlib import Path
 
@@ -51,41 +45,30 @@ from lerobot.common.policies.diffusion.configuration_diffusion import ActionConf
 from agent.encoder import MaskInputDict
 from dataset.expert_dataset import ExpertDatasetZarr
 #%%
-# # path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
-# path_to_demo_root_dir = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1")
+path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
+demo_name = "1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act"
+path_to_demo_dir = path_to_demo_root_dir / demo_name
+assert path_to_demo_dir.exists(), f"Path {path_to_demo_dir} does not exist. Please check the path."
 
-# demo_name = "1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act"
-# path_to_demo_dir = path_to_demo_root_dir / demo_name
-# assert path_to_demo_dir.exists(), f"Path {path_to_demo_dir} does not exist. Please check the path."
+path_to_zarr = path_to_demo_dir / "demos.zarr"
+path_to_json = path_to_demo_dir / "demos.json"
 
-# path_to_zarr = path_to_demo_dir / "demos.zarr"
-# path_to_json = path_to_demo_dir / "demos.json"
+assert path_to_zarr.exists(), f"Path {path_to_zarr} does not exist. Please check the path."
+assert path_to_json.exists(), f"Path {path_to_json} does not exist. Please check the path."
+zarr_dataset = zarr.open(str(path_to_zarr), mode='r+')
+#%%
+# test renaming zarr dataset
+path_to_group = 'episode_data/episode_0/dinov2_vitb14_reg_rescale_0.875'
+dataset_name = 'x_norm_patchtokens'
+new_dataset_name = 'observation.x_norm_patchtokens'
 
-# assert path_to_zarr.exists(), f"Path {path_to_zarr} does not exist. Please check the path."
-# assert path_to_json.exists(), f"Path {path_to_json} does not exist. Please check the path."
-# zarr_dataset = zarr.open(str(path_to_zarr), mode='r+')
-# #%%
-# def rename_zarr_array(demo_data: ZarrGroup, old_key: str, new_key: str, copy_over_n_chunks_at_a_time: int = 500):
-#     if old_key in demo_data:
-#         # demo_data.move(old_key, new_key)
-#         # need to manually rename the array by copying the data and then deleting the old array
-#         demo_data.create_array(new_key, shape=(0, *demo_data[old_key].shape[1:]), dtype=demo_data[old_key].dtype, chunks=demo_data[old_key].chunks, compressors=demo_data[old_key].compressors)
-#         # need to copy over n chunks at a time because the array is too large
-#         for i in tqdm(range(0, demo_data[old_key].shape[0], copy_over_n_chunks_at_a_time), desc=f"Copying {old_key} to {new_key}", unit="chunk"):
-#             start = i
-#             end = min(i + copy_over_n_chunks_at_a_time, demo_data[old_key].shape[0])
-#             demo_data[new_key].append(demo_data[old_key][start:end])
-#         assert demo_data[old_key].shape == demo_data[new_key].shape, f"demo_data[old_key].shape: {demo_data[old_key].shape} != demo_data[new_key].shape: {demo_data[new_key].shape}"
-#         del demo_data[old_key]
-#     else:
-#         raise KeyError(f"{old_key} not found in {demo_data.name}")
-# #%%
-# dataset_group_path = 'data/dinov2_vitb14_reg_rescale_0.875'
-# dataset_name = 'x_norm_patchtokens'
-# new_dataset_name = 'observation.' + dataset_name
-# # rename_zarr_array(zarr_dataset[dataset_group_path], dataset_name, new_dataset_name, copy_over_n_chunks_at_a_time=500)
-# #%%
-# del zarr_dataset[dataset_group_path][dataset_name]
+# if path_to_group in zarr_dataset and dataset_name in zarr_dataset[path_to_group]:
+#%%
+import asyncio
+original_dataset_store = zarr_dataset[path_to_group + '/' + dataset_name].store
+move_coroutine = original_dataset_store.move(path_to_group + '/' + new_dataset_name)
+asyncio.run(move_coroutine)
+
 #%%
 @click.command()
 @click.argument('episode-idx', type=int)
@@ -115,6 +98,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, dino_model_string, desir
     assert path_to_json.exists(), f"Path {path_to_json} does not exist. Please check the path."
     zarr_dataset = zarr.open(str(path_to_zarr), mode='r+')
     #%%
+    #%%
     dinov2_model = torch.hub.load('facebookresearch/dinov2', dino_model_string)
     dinov2_model.eval()
     dinov2_model.to(device)
@@ -125,7 +109,6 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, dino_model_string, desir
     original_image_size = zarr_dataset['data']['observation.rgb'].shape[1:3]
     # desired_dinov2_size = (15,20)
     assert isinstance(desired_dinov2_size, tuple) and len(desired_dinov2_size) == 2, "desired_dinov2_size should be a tuple of two integers."
-    assert desired_dinov2_size[0] <= desired_dinov2_size[1], "desired_dinov2_size should be a tuple of two integers where the first element is less than or equal to the second element."
     # compute the rescale factor based on the original image size and desired dinov2 size
     rescale_factor = (desired_dinov2_size[0] * patch_size) / original_image_size[0]
     assert rescale_factor == (desired_dinov2_size[1] * patch_size) / original_image_size[1], "Rescale factor should be the same for both dimensions."
@@ -371,7 +354,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, dino_model_string, desir
     action_horizon_length = 1
     action_history_length = 1
     action_config = ActionConfig(horizon_length=action_horizon_length, action_frame_expression='delta', input_rotation_representation='euler_angles')
-    action_history_config = ActionHistoryConfig(enable=False, history_length=action_history_length, action_frame_expression='delta', action_frame='current_end_effector', rotation_representation='euler_angles')
+    action_history_config = ActionHistoryConfig(enable=False, history_length=action_history_length, action_frame_expression='delta', frame='current_end_effector', rotation_representation='euler_angles')
     episode_dataset = ExpertDatasetZarr(path_to_zarr, 
                                         demos_idxs_list_or_num=[episode_idx], 
                                         observation_cfg=observation_cfg, 
@@ -402,8 +385,8 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, dino_model_string, desir
         T.ToDtype(torch.float32, scale=True),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
-    # batch = next(iter(dataloader))
     for i, batch in tqdm(enumerate(dataloader)):
+        batch = next(iter(dataloader))
         color_image = batch['observation.rgb'][:, 0].to(torch.uint8).to(device)
         # depth_image = batch['observation.depth'][:, 0].to(device)
         #%%
@@ -451,7 +434,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, dino_model_string, desir
             # full_resnet_output = full_resnet(inputs)
     #%%
     episode_end = zarr_dataset['meta']['episode_ends'][episode_idx]
-    episode_start = zarr_dataset['meta']['episode_ends'][episode_idx-1] if episode_idx > 0 else 0
+    episode_start = zarr_dataset['meta']['episode_starts'][episode_idx-1] if episode_idx > 0 else 0
     episode_length = episode_end - episode_start
     #%%
     assert zarr_dataset[x_norm_patchtokens_array_name].shape[0] == zarr_dataset[x_norm_clstoken_array_name].shape[0] == zarr_dataset[x_norm_regtokens_array_name].shape[0], "The number of elements in the x_norm_patchtokens, x_norm_clstoken, and x_norm_regtokens arrays should be the same."

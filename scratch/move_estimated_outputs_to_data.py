@@ -51,7 +51,7 @@ zarr_store = zarr.open(path_to_zarr, mode='r+')
 episode_lengths = np.diff(np.hstack([np.array([0]), zarr_store['meta']['episode_ends'][:]]))
 max_demo_length = episode_lengths.max()
 #%%
-zarr_store['meta'].attrs['max_demo_length'] = max_demo_length
+zarr_store['meta'].attrs['max_demo_length'] = int(max_demo_length)
 #%%
 gt_model_group_name = 'gt_contact'
 estimated_model_group_name = 'gt_contact'

@@ -1,6 +1,6 @@
 #%%
 import transformers
-from transformers import AutoModel, AutoConfig
+
 import gymnasium as gym
 import tqdm
 import numpy as np
@@ -13,8 +13,6 @@ import os
 
 import zarr
 ZARR_VERSION=int(zarr.__version__.split('.')[0])
-
-from pathlib import Path
 
 import time
 import json
@@ -75,6 +73,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, theia_model_string, desi
 # theia_model_string = 'theia-base-patch16-224-cdiv'
 # desired_theia_size = (15,20)
 # # theia_model_string = 'theia-base-patch16-224-cddsv'
+# desired_theia_size = (15,20)
 
     print(f"starting to process episode {episode_idx}...")
     device = 'cuda'

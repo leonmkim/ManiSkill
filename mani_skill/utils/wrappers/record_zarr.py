@@ -98,46 +98,52 @@ def clean_trajectories(
     # Assumes each trajectory is named "traj_{i}"
     prefix_length = len("traj_")
     # ep_ids = sorted([int(x[prefix_length:]) for x in h5_file.keys()])
-    ep_ids = sorted([int(x[prefix_length:]) for x in zarr_root['meta']['ep_ids'][:]])
+    # ep_ids = sorted([int(x[prefix_length:]) for x in zarr_root['meta']['ep_ids'][:]])
+    num_eps = zarr_root['meta']['episode_ends'].shape[0]
 
     new_json_episodes = []
     new_ep_id = 0
 
-    for i, ep_id in enumerate(ep_ids):
-        traj_id = f"traj_{ep_id}"
+    for i in range(num_eps):
         ep = json_episodes[i]
-        assert ep["episode_id"] == ep_id
-        new_traj_id = f"traj_{new_ep_id}"
-
-        if prune_empty_action and ep["elapsed_steps"] == 0:
-            raise NotImplementedError
-            # del h5_file[traj_id]
-            if i - 1 < 0:
-                start = 0
-            else:
-                start = zarr_root.meta.episode_ends[i-1]
-            end = zarr_root.meta.episode_ends[i]
-            # del zarr_root.data.observation[start:end]
-            # del zarr_root.data.action[start:end]
-            # del zarr_root.data.reward[start:end]
-            # del zarr_root.data.terminated[start:end]
-            # del zarr_root.data.truncated[start:end]
-            # del zarr_root.data.done[start:end]
-            # if "success" in zarr_root.data:
-            #     del zarr_root.data.success[start:end]
-            # if "fail" in zarr_root.data:
-            #     del zarr_root.data.fail[start:end]
-            # del zarr_root.data.env_episode_ptr[i]
-            continue
-
-        if new_traj_id != traj_id:
-            raise NotImplementedError
-            ep["episode_id"] = new_ep_id
-            h5_file[new_traj_id] = h5_file[traj_id]
-            del h5_file[traj_id]
-
         new_json_episodes.append(ep)
         new_ep_id += 1
+
+    # for i, ep_id in enumerate(ep_ids):
+    #     traj_id = f"traj_{ep_id}"
+    #     ep = json_episodes[i]
+    #     assert ep["episode_id"] == ep_id
+    #     new_traj_id = f"traj_{new_ep_id}"
+
+    #     if prune_empty_action and ep["elapsed_steps"] == 0:
+    #         raise NotImplementedError
+    #         # del h5_file[traj_id]
+    #         if i - 1 < 0:
+    #             start = 0
+    #         else:
+    #             start = zarr_root.meta.episode_ends[i-1]
+    #         end = zarr_root.meta.episode_ends[i]
+    #         # del zarr_root.data.observation[start:end]
+    #         # del zarr_root.data.action[start:end]
+    #         # del zarr_root.data.reward[start:end]
+    #         # del zarr_root.data.terminated[start:end]
+    #         # del zarr_root.data.truncated[start:end]
+    #         # del zarr_root.data.done[start:end]
+    #         # if "success" in zarr_root.data:
+    #         #     del zarr_root.data.success[start:end]
+    #         # if "fail" in zarr_root.data:
+    #         #     del zarr_root.data.fail[start:end]
+    #         # del zarr_root.data.env_episode_ptr[i]
+    #         continue
+
+    #     if new_traj_id != traj_id:
+    #         raise NotImplementedError
+    #         ep["episode_id"] = new_ep_id
+    #         h5_file[new_traj_id] = h5_file[traj_id]
+    #         del h5_file[traj_id]
+
+    #     new_json_episodes.append(ep)
+    #     new_ep_id += 1
 
     json_dict["episodes"] = new_json_episodes
 
@@ -1023,11 +1029,11 @@ class RecordEpisodeZarr(gym.Wrapper):
             flush_count += 1
             if save:
                 self._episode_id += 1
-                traj_id = "traj_{}".format(self._episode_id)
+                # traj_id = "traj_{}".format(self._episode_id)
                 # group = self._h5_file.create_group(traj_id, track_order=True)
-                if 'ep_ids' not in self.meta_group:
-                    self.meta_group.create_array('ep_ids', shape=(0,), dtype='S256', chunks=(1,), overwrite=True)
-                self.meta_group['ep_ids'].append(np.array([traj_id], dtype='S256'))
+                # if 'ep_ids' not in self.meta_group:
+                #     self.meta_group.create_array('ep_ids', shape=(0,), dtype='S256', chunks=(1,), overwrite=True)
+                # self.meta_group['ep_ids'].append(np.array([traj_id], dtype='S256'))
 
 
                 def recursive_copy_memory_store_to_disk(

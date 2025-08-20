@@ -65,6 +65,37 @@ env = gym.make(
     # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
     # control_mode="pd_ee_delta_pose",
+    box_config=BoxConfig(
+        randomize_color=True,
+        randomize_tolerance=True,
+        nominal_tolerance=0.003,
+        tolerance_randomization_bounds=[0.003, 0.015],
+        nominal_x_position=0.45,
+        randomize_x_position=True,
+        x_position_delta_randomization_bounds=[-0.05, 0.05],
+        nominal_y_position=0.25,
+        randomize_y_positon=True,
+        y_position_delta_randomization_bounds=[-0.05,0.05],
+        nominal_yaw=np.pi*(10/16),
+        randomize_yaw=False,
+        yaw_delta_randomization_bounds=[-np.pi/8, np.pi/8],
+        randomize_hole_center_location=False,
+        hole_center_randomization_bounds=[-1.0,1.0],
+    ),
+    robot_config=RobotConfig(
+        init_qpos=[-0.45725486, 0.18291518, 0.16500726, -2.2905693, -0.0728711, 2.4728112, -1.0869355, 0.02300941, 0.02296073],
+        gripper_friction=4.0,
+        gripper_patch_radius=0.1,
+    ),
+    peg_config=PegConfig(
+        randomize_color=False,
+        randomize_length=False,
+        nominal_length=0.105,
+        length_randomization_bounds=[0.085,0.125],
+        nominal_radius=0.02,
+        randomize_radius=True,
+        radius_randomization_bounds=[0.015,0.03],
+    ),
     sim_config=dict(
         sim_freq=100, # default 100
         control_freq=20, # default 20

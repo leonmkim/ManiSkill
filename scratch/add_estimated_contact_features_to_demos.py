@@ -277,6 +277,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
                                         # repeat_padding_for_actions=True,
                                         # action_using_env_state_indices=False,
                                         # stored_action_frame_expression='absolute',
+                                        check_data_is_sum_of_episode_lengths=False,
                                         )
     dataloader = DataLoader(episode_dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
     #%%
@@ -284,21 +285,35 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
     gt_contact_map_dtype = zarr_dataset['data']['gt_contact']['observation.contact_map'].dtype
     gt_contact_map_compressors = zarr_dataset['data']['gt_contact']['observation.contact_map'].compressors[0]
 
-    gt_EE_dtc_map_shape = zarr_dataset['data']['gt_contact']['observation.EE_dtc_map'].shape[1:]
-    gt_EE_dtc_map_dtype = zarr_dataset['data']['gt_contact']['observation.EE_dtc_map'].dtype
-    gt_EE_dtc_map_compressors = zarr_dataset['data']['gt_contact']['observation.EE_dtc_map'].compressors[0]
+    gt_EE_dtc_map_shape = gt_contact_map_shape
+    gt_EE_dtc_map_dtype = np.float32
+    gt_EE_dtc_map_compressors = gt_contact_map_compressors
+    # gt_EE_dtc_map_shape = zarr_dataset['data']['gt_contact']['observation.EE_dtc_map'].shape[1:]
+    # gt_EE_dtc_map_dtype = zarr_dataset['data']['gt_contact']['observation.EE_dtc_map'].dtype
+    # gt_EE_dtc_map_compressors = zarr_dataset['data']['gt_contact']['observation.EE_dtc_map'].compressors[0]
 
-    gt_EE_normals_map_shape = zarr_dataset['data']['gt_contact']['observation.EE_normals_map'].shape[1:]
-    gt_EE_normals_map_dtype = zarr_dataset['data']['gt_contact']['observation.EE_normals_map'].dtype
-    gt_EE_normals_map_compressors = zarr_dataset['data']['gt_contact']['observation.EE_normals_map'].compressors[0]     
+    gt_EE_normals_map_shape = gt_contact_map_shape
+    gt_EE_normals_map_shape[-1] = 3
+    gt_EE_normals_map_dtype = np.float32
+    gt_EE_normals_map_compressors = gt_contact_map_compressors
+    # gt_EE_normals_map_shape = zarr_dataset['data']['gt_contact']['observation.EE_normals_map'].shape[1:]
+    # gt_EE_normals_map_dtype = zarr_dataset['data']['gt_contact']['observation.EE_normals_map'].dtype
+    # gt_EE_normals_map_compressors = zarr_dataset['data']['gt_contact']['observation.EE_normals_map'].compressors[0]     
 
-    gt_env_dtc_map_shape = zarr_dataset['data']['gt_contact']['observation.env_dtc_map'].shape[1:]
-    gt_env_dtc_map_dtype = zarr_dataset['data']['gt_contact']['observation.env_dtc_map'].dtype
-    gt_env_dtc_map_compressors = zarr_dataset['data']['gt_contact']['observation.env_dtc_map'].compressors[0]       
+    gt_env_dtc_map_shape = gt_contact_map_shape
+    gt_env_dtc_map_dtype = np.float32
+    gt_env_dtc_map_compressors = gt_contact_map_compressors
+    # gt_env_dtc_map_shape = zarr_dataset['data']['gt_contact']['observation.env_dtc_map'].shape[1:]
+    # gt_env_dtc_map_dtype = zarr_dataset['data']['gt_contact']['observation.env_dtc_map'].dtype
+    # gt_env_dtc_map_compressors = zarr_dataset['data']['gt_contact']['observation.env_dtc_map'].compressors[0]       
 
-    gt_env_normals_map_shape = zarr_dataset['data']['gt_contact']['observation.env_normals_map'].shape[1:]
-    gt_env_normals_map_dtype = zarr_dataset['data']['gt_contact']['observation.env_normals_map'].dtype
-    gt_env_normals_map_compressors = zarr_dataset['data']['gt_contact']['observation.env_normals_map'].compressors[0]
+    gt_env_normals_map_shape = gt_contact_map_shape
+    gt_env_normals_map_shape[-1] = 3
+    gt_env_normals_map_dtype = np.float32
+    gt_env_normals_map_compressors = gt_contact_map_compressors
+    # gt_env_normals_map_shape = zarr_dataset['data']['gt_contact']['observation.env_normals_map'].shape[1:]
+    # gt_env_normals_map_dtype = zarr_dataset['data']['gt_contact']['observation.env_normals_map'].dtype
+    # gt_env_normals_map_compressors = zarr_dataset['data']['gt_contact']['observation.env_normals_map'].compressors[0]
 
     #%%
     ## ##############

@@ -18,7 +18,7 @@ from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
 
 
-from mani_skill.envs.tasks.tabletop.peg_insertion_side_custom import RobotConfig
+from mani_skill.envs.tasks.tabletop.peg_insertion_side_custom import BoxConfig, PegConfig, RobotConfig
 
 from mani_skill.utils.wrappers.record_rerun import RecordEpisodeRerun
 import multiprocessing
@@ -57,7 +57,37 @@ env = gym.make(
     # control_mode="pd_ee_target_delta_pose_unnormalized",
     # control_mode="pd_ee_delta_pose",
     # urdf_config=urdf_config,
-    # robot_config=robot_config,
+    box_config=BoxConfig(
+        randomize_color=True,
+        randomize_tolerance=True,
+        nominal_tolerance=0.003,
+        tolerance_randomization_bounds=[0.003, 0.015],
+        nominal_x_position=0.45,
+        randomize_x_position=True,
+        x_position_delta_randomization_bounds=[-0.05, 0.05],
+        nominal_y_position=0.25,
+        randomize_y_positon=True,
+        y_position_delta_randomization_bounds=[-0.05,0.05],
+        nominal_yaw=np.pi*(10/16),
+        randomize_yaw=False,
+        yaw_delta_randomization_bounds=[-np.pi/8, np.pi/8],
+        randomize_hole_center_location=False,
+        hole_center_randomization_bounds=[-1.0,1.0],
+    ),
+    robot_config=RobotConfig(
+        init_qpos=[-0.45725486, 0.18291518, 0.16500726, -2.2905693, -0.0728711, 2.4728112, -1.0869355, 0.02300941, 0.02296073],
+        gripper_friction=4.0,
+        gripper_patch_radius=0.1,
+    ),
+    peg_config=PegConfig(
+        randomize_color=False,
+        randomize_length=False,
+        nominal_length=0.105,
+        length_randomization_bounds=[0.085,0.125],
+        nominal_radius=0.02,
+        randomize_radius=True,
+        radius_randomization_bounds=[0.015,0.03],
+    ),
     sim_config=dict(
         sim_freq=100, # default 100
         control_freq=20, # default 20
@@ -348,8 +378,8 @@ while True:
         # fig.canvas.flush_events()
         # plt.pause(0.001)
 
-        # current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
-        current_frame = cv2.cvtColor(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), cv2.COLOR_RGB2BGR)
+        current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
+        # current_frame = cv2.cvtColor(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), cv2.COLOR_RGB2BGR)
         # # draw a 144x144 box around the end effector pixel
         # end_effector_pixel_coordinates = obs['extra']['end_effector_pixel_coordinates'][0].cpu().numpy()
         # x, y = end_effector_pixel_coordinates[:2]
@@ -408,7 +438,7 @@ while True:
             # q_pos = obs['agent']['qpos'][0].cpu().numpy()
             # print(f"EE pos: {EE_pos}")
             # print(f"q pos: {q_pos}")
-            print(f"success: {info['success']} | peg_head_pos_at_hole: {info['peg_head_pos_at_hole']} | peg_is_possibly_grasped: {info['peg_is_possibly_grasped']}")
+            print(f"reward: {reward} | success: {info['success']} | peg_head_pos_at_hole: {info['peg_head_pos_at_hole']} | peg_is_possibly_grasped: {info['peg_is_possibly_grasped']}")
 
     if key == ord('q'):
         num_trajs += 1
