@@ -53,14 +53,14 @@ max_demo_length = episode_lengths.max()
 #%%
 zarr_store['meta'].attrs['max_demo_length'] = int(max_demo_length)
 #%%
-gt_model_group_name = 'gt_contact'
-estimated_model_group_name = 'gt_contact'
-data_array_names_list = [
-    'observation.EE_dtc_map',
-    'observation.EE_normals_map',
-    'observation.env_dtc_map',
-    'observation.env_normals_map',
-]
+# gt_model_group_name = 'gt_contact'
+# estimated_model_group_name = 'gt_contact'
+# data_array_names_list = [
+#     'observation.EE_dtc_map',
+#     'observation.EE_normals_map',
+#     'observation.env_dtc_map',
+#     'observation.env_normals_map',
+# ]
 
 # gt_model_group_name = 'gt_segmentation'
 # estimated_model_group_name = 'sam2-hiera-base-plus'
@@ -92,22 +92,22 @@ data_array_names_list = [
 # plt.imshow(rgb_image)
 # plt.imshow(mask, cmap='gray', alpha=0.5)
 #%%
-# gt_model_group_name = 'gt_contact'
+gt_model_group_name = 'gt_contact'
 # estimated_model_group_name = 'contact_model_175604_2_epoch_9'
-# # estimated_model_group_name = 'contact_model_197406_2_epoch_8'
+estimated_model_group_name = 'contact_model_197406_2_epoch_8'
 
 # contact_map_data_array_name = 'observation.contact_map'
-# EE_dtc_data_array_name = 'observation.EE_dtc_map'
-# env_dtc_data_array_name = 'observation.env_dtc_map'
-# EE_normals_data_array_name = 'observation.EE_normals_map'
-# env_normals_data_array_name = 'observation.env_normals_map'
-# data_array_names_list = [
-#     contact_map_data_array_name,
-#     EE_dtc_data_array_name,
-#     env_dtc_data_array_name,
-#     EE_normals_data_array_name,
-#     env_normals_data_array_name
-# ]
+EE_dtc_data_array_name = 'observation.EE_dtc_map'
+env_dtc_data_array_name = 'observation.env_dtc_map'
+EE_normals_data_array_name = 'observation.EE_normals_map'
+env_normals_data_array_name = 'observation.env_normals_map'
+data_array_names_list = [
+    # contact_map_data_array_name,
+    EE_dtc_data_array_name,
+    env_dtc_data_array_name,
+    EE_normals_data_array_name,
+    env_normals_data_array_name
+]
 
 # %%
 episode_lengths = np.diff(np.hstack([np.array([0]), zarr_store['meta']['episode_ends'][:]]))

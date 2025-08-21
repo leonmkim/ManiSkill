@@ -241,15 +241,15 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
     #%%
     # check if already exists
     episode_length = zarr_dataset['meta']['episode_ends'][episode_idx] - (0 if episode_idx == 0 else zarr_dataset['meta']['episode_ends'][episode_idx - 1])
-    if episode_data_contact_map_array_name in zarr_dataset:
-        episode_data_array_length = zarr_dataset[episode_data_contact_map_array_name].shape[0]
-        assert episode_data_array_length == zarr_dataset[episode_data_EE_dtc_map_array_name].shape[0] == zarr_dataset[episode_data_EE_normals_map_array_name].shape[0] == zarr_dataset[episode_data_env_dtc_map_array_name].shape[0] == zarr_dataset[episode_data_env_normals_map_array_name].shape[0], "All episode data arrays must have the same length."
-        # if exists then check if length matches episode length
-        if episode_data_array_length == episode_length:
-            print(f"Episode data arrays already exist for episode {episode_idx} and have the correct length {episode_length}. Skipping mask generation.")
-            return
-        else:
-            print(f"Episode data arrays already exist for episode {episode_idx} but have length {episode_data_array_length} which does not match episode length {episode_length}. Re-generating masks.")
+    # if episode_data_contact_map_array_name in zarr_dataset:
+    #     episode_data_array_length = zarr_dataset[episode_data_contact_map_array_name].shape[0]
+    #     assert episode_data_array_length == zarr_dataset[episode_data_EE_dtc_map_array_name].shape[0] == zarr_dataset[episode_data_EE_normals_map_array_name].shape[0] == zarr_dataset[episode_data_env_dtc_map_array_name].shape[0] == zarr_dataset[episode_data_env_normals_map_array_name].shape[0], "All episode data arrays must have the same length."
+    #     # if exists then check if length matches episode length
+    #     if episode_data_array_length == episode_length:
+    #         print(f"Episode data arrays already exist for episode {episode_idx} and have the correct length {episode_length}. Skipping mask generation.")
+    #         return
+    #     else:
+    #         print(f"Episode data arrays already exist for episode {episode_idx} but have length {episode_data_array_length} which does not match episode length {episode_length}. Re-generating masks.")
         
 
     #%%
@@ -292,8 +292,8 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
     # gt_EE_dtc_map_dtype = zarr_dataset['data']['gt_contact']['observation.EE_dtc_map'].dtype
     # gt_EE_dtc_map_compressors = zarr_dataset['data']['gt_contact']['observation.EE_dtc_map'].compressors[0]
 
-    gt_EE_normals_map_shape = gt_contact_map_shape
-    gt_EE_normals_map_shape[-1] = 3
+    gt_EE_normals_map_shape = (*gt_contact_map_shape[:-1], 3)
+    # gt_EE_normals_map_shape[-1] = 3
     gt_EE_normals_map_dtype = np.float32
     gt_EE_normals_map_compressors = gt_contact_map_compressors
     # gt_EE_normals_map_shape = zarr_dataset['data']['gt_contact']['observation.EE_normals_map'].shape[1:]
@@ -307,8 +307,8 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
     # gt_env_dtc_map_dtype = zarr_dataset['data']['gt_contact']['observation.env_dtc_map'].dtype
     # gt_env_dtc_map_compressors = zarr_dataset['data']['gt_contact']['observation.env_dtc_map'].compressors[0]       
 
-    gt_env_normals_map_shape = gt_contact_map_shape
-    gt_env_normals_map_shape[-1] = 3
+    gt_env_normals_map_shape = (*gt_contact_map_shape[:-1], 3)
+    # gt_env_normals_map_shape[-1] = 3
     gt_env_normals_map_dtype = np.float32
     gt_env_normals_map_compressors = gt_contact_map_compressors
     # gt_env_normals_map_shape = zarr_dataset['data']['gt_contact']['observation.env_normals_map'].shape[1:]
