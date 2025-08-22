@@ -1277,7 +1277,7 @@ class BookInsertionEnv(BaseEnv):
                 not_toppled=not_toppled,
                 top_within_slot=top_within_slot,
                 bottom_within_slot=bottom_within_slot,
-                grasped_book_is_possibly_grasped=self.grasped_book_is_possibly_grasped,
+                grasped_object_is_possibly_grasped=self.grasped_book_is_possibly_grasped,
                 )
         else:
             return dict()

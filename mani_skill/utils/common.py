@@ -876,16 +876,22 @@ def get_extrinsic_contact_data(num_envs, device, scene, max_extrinsic_contacts, 
         if return_contact_positions:
             contact_data['contact_positions'] = contact_positions
         return contact_data
-    
-def pixel_coordinates_to_image_array_indices(pixel_coordinates, camera_height, camera_width, device):
+
+def pixel_coordinates_to_image_array_indices(pixel_coordinates, camera_height, camera_width, device, contact_forces=None):
     # TODO extend to multiple envs
     '''
     pixel_coordinates in format (u,v): bxNx2
+    contact forces in format bxNx3
     returns: image_array_indices: bxHxWx1
     '''
     # filter out nan rows
     assert pixel_coordinates.ndim == 3, "pixel_coordinates must have shape bxNx2"
     assert pixel_coordinates.shape[-1] == 2, "pixel_coordinates must have shape bxNx2"
+    if contact_forces is not None:
+        assert contact_forces.ndim == 3, "contact_forces must have shape bxNx3"
+        assert contact_forces.shape[1] == pixel_coordinates.shape[1], "contact_forces and pixel_coordinates must have same N dimension"
+        assert contact_forces.shape[0] == pixel_coordinates.shape[0], "contact_forces and pixel_coordinates must have same batch dimension"
+        assert contact_forces.shape[2] == 3, "contact_forces must have shape bxNx3"
     with torch.device(device):
         # swap u and v to match image coordinates
         pixel_coordinates = pixel_coordinates[..., [1, 0]]
@@ -893,10 +899,11 @@ def pixel_coordinates_to_image_array_indices(pixel_coordinates, camera_height, c
         # filter out points outside of image plane
         valid_points = (pixel_coordinates[..., 0] >= 0) & (pixel_coordinates[..., 0] < camera_height) & (pixel_coordinates[..., 1] >= 0) & (pixel_coordinates[..., 1] < camera_width)
         pixel_coordinates = pixel_coordinates[valid_points]
-
+        if contact_forces is not None:
+            contact_forces = contact_forces[valid_points]
         # add index for batch dimension
         pixel_coordinates = torch.cat([torch.zeros((pixel_coordinates.shape[0], 1), dtype=torch.int), pixel_coordinates], dim=1)
-    return pixel_coordinates
+    return pixel_coordinates, contact_forces
 
 def get_extrinsic_contact_map_data(num_envs, device, scene, max_extrinsic_contacts, camera_height, camera_width, camera_intrinsic, camera_extrinsic, object_name, robot_name, return_contact_positions_map=True, return_contact_forces_map=True):
     assert return_contact_positions_map or return_contact_forces_map, "must return at least one of contact positions map or forces map"
@@ -918,12 +925,14 @@ def get_extrinsic_contact_map_data(num_envs, device, scene, max_extrinsic_contac
             contact_forces_map = torch.zeros((b, camera_height, camera_width, 3), dtype=torch.float32)
         if N > 0:
             contact_pixel_coordinates = batched_position_to_pixel_coordinates(contact_positions, camera_intrinsic, camera_extrinsic)
-            contact_image_array_indices = pixel_coordinates_to_image_array_indices(contact_pixel_coordinates, camera_height, camera_width, device)
+            contact_forces = None
+            if return_contact_forces_map:
+                contact_forces = contact_data_dict['contact_forces'][~torch.any(torch.isnan(contact_data_dict['contact_forces']), dim=2)].reshape(b, -1, 3)
+            contact_image_array_indices, contact_forces = pixel_coordinates_to_image_array_indices(contact_pixel_coordinates, camera_height, camera_width, device, contact_forces=contact_forces)
 
             if return_contact_positions_map:
                 contact_map[tuple(contact_image_array_indices.T)] = 1.0
             if return_contact_forces_map:
-                contact_forces = contact_data_dict['contact_forces'][~torch.any(torch.isnan(contact_data_dict['contact_forces']), dim=2)].reshape(b, -1, 3)
                 contact_forces_map[tuple(contact_image_array_indices.T)] = contact_forces
         if return_contact_positions_map:
             contact_map_dict['extrinsic_contact_map'] = contact_map

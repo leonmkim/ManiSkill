@@ -180,30 +180,26 @@ class BoxConfig:
         if self.randomize_tolerance:
             # assert bounds for tolerance are valid > 0
             assert (
-                isinstance(self.tolerance_randomization_bounds, list)
-                and len(self.tolerance_randomization_bounds) == 2
+                len(self.tolerance_randomization_bounds) == 2
                 and self.tolerance_randomization_bounds[0] > 0
                 and self.tolerance_randomization_bounds[1] > 0
             ), f"tolerance_randomization_bounds must be a list of two positive values, but got {self.tolerance_randomization_bounds}"
         if self.randomize_x_position:
             # assert bounds for x position are valid
             assert (
-                isinstance(self.x_position_delta_randomization_bounds, list)
-                and len(self.x_position_delta_randomization_bounds) == 2
+                len(self.x_position_delta_randomization_bounds) == 2
                 and self.x_position_delta_randomization_bounds[0] < self.x_position_delta_randomization_bounds[1]
             ), f"x_position_randomization_bounds must be a list of two values with the first one smaller than the second, but got {self.x_position_delta_randomization_bounds}"
         if self.randomize_y_position:
             # assert bounds for y position are valid
             assert (
-                isinstance(self.y_position_delta_randomization_bounds, list)
-                and len(self.y_position_delta_randomization_bounds) == 2
+                len(self.y_position_delta_randomization_bounds) == 2
                 and self.y_position_delta_randomization_bounds[0] < self.y_position_delta_randomization_bounds[1]
             ), f"y_position_randomization_bounds must be a list of two values with the first one smaller than the second, but got {self.y_position_delta_randomization_bounds}"
         if self.randomize_yaw:
             # assert bounds for yaw are valid
             assert (
-                isinstance(self.yaw_delta_randomization_bounds, list)
-                and len(self.yaw_delta_randomization_bounds) == 2
+                len(self.yaw_delta_randomization_bounds) == 2
                 and self.yaw_delta_randomization_bounds[0] < self.yaw_delta_randomization_bounds[1]
             ), f"yaw_randomization_bounds must be a list of two values with the first one smaller than the second, but got {self.yaw_delta_randomization_bounds}"
 
@@ -225,14 +221,12 @@ class PegConfig:
     def __post_init__(self):
         if self.randomize_length:
             assert (
-                isinstance(self.length_randomization_bounds, list)
-                and len(self.length_randomization_bounds) == 2
+                len(self.length_randomization_bounds) == 2
                 and self.length_randomization_bounds[0] < self.length_randomization_bounds[1]
             ), f"length_randomization_bounds must be a list of two values with the first one smaller than the second, but got {self.length_randomization_bounds}"
         if self.randomize_radius:
             assert (
-                isinstance(self.radius_randomization_bounds, list)
-                and len(self.radius_randomization_bounds) == 2
+                len(self.radius_randomization_bounds) == 2
                 and self.radius_randomization_bounds[0] < self.radius_randomization_bounds[1]
             ), f"radius_randomization_bounds must be a list of two values with the first one smaller than the second, but got {self.radius_randomization_bounds}"
 
@@ -272,6 +266,11 @@ class PegInsertionSideCustomEnv(BaseEnv):
     render_contact_forces_map: bool = False
 
     max_extrinsic_contacts: int = 50 # for padding
+
+    success_criteria_params: Dict[str, Any] = dict(
+        distance_from_peg_midline=0.015,
+        success_duration_threshold=0.0, # seconds
+    )
 
     def __init__(
         self,
@@ -632,7 +631,8 @@ class PegInsertionSideCustomEnv(BaseEnv):
         obs['W_FT_EE'] = W_FT_EE
 
         obs['end_effector_pixel_coordinates'] = batched_position_to_pixel_coordinates(end_effector_pose[:, :3].unsqueeze(1), self.base_camera_intrinsic, self.base_camera_extrinsic_cv).squeeze(1)
-        
+
+        obs['hole_tolerance'] = self.box_hole_clearances.unsqueeze(1) # bx1
         if self.render_contact_map or self.render_contact_forces_map:
             obs.update(get_extrinsic_contact_map_data(self.num_envs, self.device, self.scene, self.max_extrinsic_contacts, self.camera_height, self.camera_width, self.base_camera_intrinsic, self.base_camera_extrinsic_cv, 'peg', 'panda', return_contact_positions_map=self.render_contact_map, return_contact_forces_map=self.render_contact_forces_map))
 
@@ -710,7 +710,8 @@ class PegInsertionSideCustomEnv(BaseEnv):
         # Only head position is used in fact
         peg_head_pos_at_hole = (self.box_hole_pose.inv() * self.peg_head_pose).p
         # x-axis is hole direction
-        x_flag = -0.015 <= peg_head_pos_at_hole[:, 0]
+        # x_flag = -0.015 <= peg_head_pos_at_hole[:, 0]
+        x_flag = -1*self.success_criteria_params['distance_from_peg_midline'] <= peg_head_pos_at_hole[:, 0]
         # x_flag = 0.0 <= peg_head_pos_at_hole[:, 0]
         y_flag = (-self.box_hole_inner_radii <= peg_head_pos_at_hole[:, 1]) & (
             peg_head_pos_at_hole[:, 1] <= self.box_hole_inner_radii
@@ -752,7 +753,7 @@ class PegInsertionSideCustomEnv(BaseEnv):
     def evaluate(self):
         success, peg_head_pos_at_hole = self.has_peg_inserted()
         peg_is_possibly_grasped = self.peg_is_possibly_grasped
-        return dict(success=success, peg_head_pos_at_hole=peg_head_pos_at_hole, peg_is_possibly_grasped=peg_is_possibly_grasped)
+        return dict(success=success, peg_head_pos_at_hole=peg_head_pos_at_hole, grasped_object_is_possibly_grasped=peg_is_possibly_grasped)
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
         # Stage 1: Encourage gripper to be rotated to be lined up with the peg
