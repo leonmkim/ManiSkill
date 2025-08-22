@@ -723,6 +723,13 @@ class PegInsertionSideCustomEnv(BaseEnv):
             x_flag & y_flag & z_flag,
             peg_head_pos_at_hole,
         )
+    
+    @property
+    def end_effector_past_midline_of_peg(self):
+        end_effector_pose_in_peg_frame = (self.peg_head_pose.inv() * self.agent.tcp.pose).p
+        past_midline_flag = end_effector_pose_in_peg_frame[:, 0] > -self.peg_half_sizes[:, 0] 
+        return past_midline_flag
+
     @property
     def gripper_pose(self):
         with torch.device(self.device):
@@ -753,7 +760,7 @@ class PegInsertionSideCustomEnv(BaseEnv):
     def evaluate(self):
         success, peg_head_pos_at_hole = self.has_peg_inserted()
         peg_is_possibly_grasped = self.peg_is_possibly_grasped
-        return dict(success=success, peg_head_pos_at_hole=peg_head_pos_at_hole, grasped_object_is_possibly_grasped=peg_is_possibly_grasped)
+        return dict(success=success, peg_head_pos_at_hole=peg_head_pos_at_hole, grasped_object_is_possibly_grasped=peg_is_possibly_grasped, end_effector_past_midline_of_peg=self.end_effector_past_midline_of_peg)
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
         # Stage 1: Encourage gripper to be rotated to be lined up with the peg

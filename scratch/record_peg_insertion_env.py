@@ -15,7 +15,7 @@ from mani_skill.trajectory.utils import index_dict, dict_to_list_of_dicts
 from mani_skill.utils.visualization.misc import images_to_video
 from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
-from mani_skill.envs.tasks.tabletop.book_insertion import GraspedBookConfig, BookEndsConfig, EnvBooksConfig, SlotConfig
+from mani_skill.envs.tasks.tabletop.peg_insertion_side_custom import BoxConfig, RobotConfig, PegConfig
 
 import cv2
 
@@ -74,7 +74,7 @@ env = gym.make(
         randomize_x_position=True,
         x_position_delta_randomization_bounds=[-0.05, 0.05],
         nominal_y_position=0.25,
-        randomize_y_positon=True,
+        randomize_y_position=True,
         y_position_delta_randomization_bounds=[-0.05,0.05],
         nominal_yaw=np.pi*(10/16),
         randomize_yaw=False,
