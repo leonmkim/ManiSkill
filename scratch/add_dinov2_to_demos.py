@@ -25,7 +25,6 @@ from pytorch3d.transforms import quaternion_to_matrix
 from torch.utils.data import DataLoader
 
 from tqdm import tqdm
-import einops
 import imageio
 import einops
 import click

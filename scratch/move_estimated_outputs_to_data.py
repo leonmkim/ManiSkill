@@ -44,8 +44,10 @@ from tqdm import tqdm
 # path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act/demos.zarr")
 # path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/638_sim_nominal_demos_peginsertion_20hz_act/demos.zarr")
 # path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/269_sim_recovery_demos_peginsertion_20hz_act/demos.zarr")
-path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/907_sim_all_demos_peginsertion_20hz_act/demos.zarr")
+# path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/907_sim_all_demos_peginsertion_20hz_act/demos.zarr")
 # path_to_zarr = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/2_demo_test/demos.zarr")
+path_to_zarr = Path("/mnt/12_tb_hdd/fish_contact_backup/FISH/expert_demos/frankagym/FrankaInsertion-v1/907_sim_all_demos_peginsertion_20hz_act/demos.zarr")
+
 zarr_store = zarr.open(path_to_zarr, mode='r+')
 #%%
 episode_lengths = np.diff(np.hstack([np.array([0]), zarr_store['meta']['episode_ends'][:]]))
@@ -96,17 +98,17 @@ gt_model_group_name = 'gt_contact'
 # estimated_model_group_name = 'contact_model_175604_2_epoch_9'
 estimated_model_group_name = 'contact_model_197406_2_epoch_8'
 
-# contact_map_data_array_name = 'observation.contact_map'
-EE_dtc_data_array_name = 'observation.EE_dtc_map'
-env_dtc_data_array_name = 'observation.env_dtc_map'
-EE_normals_data_array_name = 'observation.EE_normals_map'
-env_normals_data_array_name = 'observation.env_normals_map'
+contact_map_data_array_name = 'observation.contact_map'
+# EE_dtc_data_array_name = 'observation.EE_dtc_map'
+# env_dtc_data_array_name = 'observation.env_dtc_map'
+# EE_normals_data_array_name = 'observation.EE_normals_map'
+# env_normals_data_array_name = 'observation.env_normals_map'
 data_array_names_list = [
-    # contact_map_data_array_name,
-    EE_dtc_data_array_name,
-    env_dtc_data_array_name,
-    EE_normals_data_array_name,
-    env_normals_data_array_name
+    contact_map_data_array_name,
+    # EE_dtc_data_array_name,
+    # env_dtc_data_array_name,
+    # EE_normals_data_array_name,
+    # env_normals_data_array_name
 ]
 
 # %%

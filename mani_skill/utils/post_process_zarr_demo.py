@@ -459,21 +459,31 @@ def correct_faulty_trimming(demo_data: ZarrGroup,
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/2_sim_recovery_demos_peginsertion_20hz_act/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/5_sim_all_demos_peginsertion_20hz_act/demos.zarr')
 # base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/3_sim_nominal_demos_peginsertion_20hz_act/demos.zarr')
-base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/240_sim_demos_left_of_4th_book_bookends_no_env_rand_20hz_act/demos.zarr')
+# base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/5_sim_all_demos_peginsertion_20hz_act/demos.zarr')
+
+base_demo_path = Path('/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/5_sim_all_demos_peginsertion_20hz_act/demos.zarr')
 
 zarr_store = zarr.open(base_demo_path, mode='r')
 #%%
+#%%
 from mani_skill.utils.visualization import images_to_video
-episode_idx = 1
+import cv2
+episode_idx = 0
 episode_start = zarr_store['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
 episode_end = zarr_store['meta']['episode_ends'][episode_idx]
-images = zarr_store['data']['observation.rgb'][episode_start:episode_end]
-# images = zarr_store['episode_data'][f'episode_{episode_idx}']['sam2-hiera-base-plus']['observation.EE_obj_mask'][:]
-# images *= 255
+dtc_clamp = 0.4
+# images = zarr_store['episode_data'][f'episode_{episode_idx}']['gt_contact']['observation.EE_dtc_map'][:]
+images = zarr_store['episode_data'][f'episode_{episode_idx}']['gt_contact']['observation.env_dtc_map'][:]
+images = (-1*np.clip(images, 0, dtc_clamp)) + dtc_clamp
+images = (images * (255/dtc_clamp)).astype(np.uint8)
+# images = cv2.cvtColor(images, cv2.COLOR_GRAY2RGB)
+# images = zarr_store['data']['observation.rgb'][episode_start:episode_end]
+# # images = zarr_store['episode_data'][f'episode_{episode_idx}']['sam2-hiera-base-plus']['observation.EE_obj_mask'][:]
+# # images *= 255
+# # images = images.astype(np.uint8)
+# images = zarr_store['episode_data'][f'episode_{episode_idx}']['gt_contact']['observation.env_normals_map'][:]
+# images = ((images + 1) / 2) * 255
 # images = images.astype(np.uint8)
-images = zarr_store['episode_data'][f'episode_{episode_idx}']['gt_contact']['observation.env_normals_map'][:]
-images = ((images + 1) / 2) * 255
-images = images.astype(np.uint8)
 #%%
 # wrenches = zarr_store['data']['observation.end_effector_external_wrench_in_world'][episode_start:episode_end]
 # import matplotlib.pyplot as plt
@@ -492,7 +502,7 @@ images = images.astype(np.uint8)
 images_to_video(
     images=images,
     output_dir='./',
-    video_name=f'episode_{episode_idx}_env_normals_video',
+    video_name=f'episode_{episode_idx}_env_dtc_clamp_{dtc_clamp}.mp4',
     fps=20,
 )
 #%%

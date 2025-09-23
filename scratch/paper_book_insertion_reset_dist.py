@@ -17,8 +17,7 @@ from mani_skill.utils.visualization.misc import images_to_video
 from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.utils.wrappers.record_zarr import RecordEpisodeZarr
 
-
-from mani_skill.envs.tasks.tabletop.peg_insertion_side_custom import BoxConfig, PegConfig, RobotConfig
+from mani_skill.envs.tasks.tabletop.book_insertion import GraspedBookConfig, BookEndsConfig, EnvBooksConfig, SlotConfig
 
 from mani_skill.utils.wrappers.record_rerun import RecordEpisodeRerun
 import multiprocessing
@@ -29,8 +28,8 @@ import cv2
 
 import time
 
-from mani_skill.utils.teleoperation import SpacemouseInput
-spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,0,0,1])
+# from mani_skill.utils.teleoperation import SpacemouseInput
+# spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,1,1,1])
 desired_viewing_size = (256, 256)
 
 ## testing book insertion task
@@ -38,56 +37,52 @@ joint_stiffness = 100.0
 joint_damping = 2*np.sqrt(joint_stiffness)
 env = gym.make(
     # "LiftPegUpright-v1", 
-    "PegInsertionSideCustom-v1", 
-    cam_resize_factor=0.5,
+    "BookInsertion-v0", 
+    cam_resize_factor=1.0,
     reward_mode="none", 
     sim_backend='physx_cpu', 
     render_mode="rgb_array", 
     # render_mode="sensors", 
     render_backend="gpu",
     obs_mode="rgb",
-    # obs_mode="none",
     render_contact_map=False,
     render_dtc_maps=False,
     render_normals_maps=False,
     render_contact_forces_map=False,
+    book_ends_config=BookEndsConfig(
+        mode='spring',
+        height=0.25,
+        wall_height=0.25,
+        mass=1.0,
+        friction=0.0,
+        color="#808080", # default color
+        joint_stiffness=joint_stiffness, 
+        joint_damping=joint_damping,
+        travel_limit=0.125,
+    ),
+    grasped_book_config=GraspedBookConfig(
+        randomize_color=True,
+        randomize_density=False,
+        randomize_length=False,
+        randomize_height=True,
+        randomize_width=True,
+    ),
+    env_books_config=EnvBooksConfig(
+        randomize_color=False,
+        randomize_density=False,
+        randomize_height=False,
+        randomize_length=False,
+        randomize_width=False,
+    ),
+    slot_config=SlotConfig(
+        y_randomization_bounds=[-0.05, 0.05],
+    ),
+    # obs_mode="none",
     control_mode="pd_ee_target_delta_pose",
     # control_mode="pd_ee_pose",
     # control_mode="pd_ee_target_pose",
     # control_mode="pd_ee_target_delta_pose_unnormalized",
     # control_mode="pd_ee_delta_pose",
-    # urdf_config=urdf_config,
-    box_config=BoxConfig(
-        randomize_color=True,
-        randomize_tolerance=True,
-        nominal_tolerance=0.003,
-        tolerance_randomization_bounds=[0.003, 0.015],
-        nominal_x_position=0.45,
-        randomize_x_position=True,
-        x_position_delta_randomization_bounds=[-0.05, 0.05],
-        nominal_y_position=0.25,
-        randomize_y_position=True,
-        y_position_delta_randomization_bounds=[-0.05,0.05],
-        nominal_yaw=np.pi*(10/16),
-        randomize_yaw=False,
-        yaw_delta_randomization_bounds=[-np.pi/8, np.pi/8],
-        randomize_hole_center_location=False,
-        hole_center_randomization_bounds=[-1.0,1.0],
-    ),
-    robot_config=RobotConfig(
-        init_qpos=[-0.45725486, 0.18291518, 0.16500726, -2.2905693, -0.0728711, 2.4728112, -1.0869355, 0.02300941, 0.02296073],
-        gripper_friction=4.0,
-        gripper_patch_radius=0.1,
-    ),
-    peg_config=PegConfig(
-        randomize_color=False,
-        randomize_length=False,
-        nominal_length=0.105,
-        length_randomization_bounds=[0.085,0.125],
-        nominal_radius=0.02,
-        randomize_radius=True,
-        radius_randomization_bounds=[0.015,0.03],
-    ),
     sim_config=dict(
         sim_freq=100, # default 100
         control_freq=20, # default 20
@@ -351,115 +346,21 @@ obs, info = env.reset(seed=seed)
 
 # plt.tight_layout()
 #%%
-while True:
-    start_time = time.perf_counter()
-    while True:
-        # action = env.action_space.sample()
-        action, _ = spacemouse_input.get_action()
-        obs, reward, terminated, truncated, info = env.step(action)
+start_seed = 0
+num_seeds = 50
 
-        # O_FT_EE = obs['extra']['W_FT_EE'] # Bx6
+#%%
+import imageio
+fps = 15
+quality = 8
+path_to_video = Path("./paper_book_insertion_vids")
+path_to_video.mkdir(parents=True, exist_ok=True)
 
-        # force_torque_queue = np.roll(force_torque_queue, -1, axis=0)
-        # force_torque_queue[-1] = O_FT_EE[0, :].cpu().numpy()
-        # # force_torque_queue[-1] = O_v_EE[0, :, 0].cpu().numpy()
-
-        # line_fx.set_ydata(force_torque_queue[:, 0])
-        # line_fy.set_ydata(force_torque_queue[:, 1])
-        # line_fz.set_ydata(force_torque_queue[:, 2])
-
-        # line_tx.set_ydata(force_torque_queue[:, 3])
-        # line_ty.set_ydata(force_torque_queue[:, 4])
-        # line_tz.set_ydata(force_torque_queue[:, 5])
-
-        # # env.render_human()
-
-        # fig.canvas.draw()
-        # fig.canvas.flush_events()
-        # plt.pause(0.001)
-
-        current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
-        # current_frame = cv2.cvtColor(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), cv2.COLOR_RGB2BGR)
-        # # draw a 144x144 box around the end effector pixel
-        # end_effector_pixel_coordinates = obs['extra']['end_effector_pixel_coordinates'][0].cpu().numpy()
-        # x, y = end_effector_pixel_coordinates[:2]
-        # cv2.rectangle(current_frame, (x - 72, y - 72), (x + 72, y + 72), (0, 255, 0), 2)
-
-        # current_frame = obs['sensor_data']['base_camera']['Color'][0][:,:,:3].cpu().numpy()
-
-        # current_frame = (current_frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
-        # current_frame = cv2.resize(current_frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
-
-        # current_frame = np.hstack((current_frame,((obs['extra']['env_normals_map'][0].cpu().numpy() + 1.0) * (255/2.0)).astype(np.uint8)))
-        # concatenate horizontally a second frame
-        # current_frame = np.hstack((current_frame,((obs['extra']['EE_normals_map'][0].cpu().numpy() + 1.0) * (255/2.0)).astype(np.uint8)))
-
-        # EE_dtc_map = np.clip(obs['extra']['EE_dtc_map'][0].cpu().numpy(), 0, 0.2)
-        # env_dtc_map = np.clip(obs['extra']['env_dtc_map'][0].cpu().numpy(), 0, 0.2)
-        # assert env_dtc_map.ndim == 3, f"Expected 3D array, got {env_dtc_map.ndim}D with shape {env_dtc_map.shape}"
-        # assert env_dtc_map.shape[-1] == 1, f"Expected 1 channel, got {env_dtc_map.shape[-1]} channels with shape {env_dtc_map.shape}"
-        # combined_dtc_map = np.minimum(EE_dtc_map, env_dtc_map)
-        # assert combined_dtc_map.ndim == 3, f"Expected 3D array, got {combined_dtc_map.ndim}D with shape {combined_dtc_map.shape}"
-        # assert combined_dtc_map.shape[-1] == 1, f"Expected 1 channel, got {combined_dtc_map.shape[-1]} channels with shape {combined_dtc_map.shape}"
-
-        # combined_dtc_map = ((-1*combined_dtc_map + 0.2) * (255/0.2)).astype(np.uint8)
-        # combined_dtc_map = cv2.applyColorMap(combined_dtc_map, cv2.COLORMAP_BONE)
-        # current_frame = np.hstack((current_frame, combined_dtc_map))
-
-        cv2.imshow("frame", current_frame)
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q') or key == ord('c') or key == ord('r'):
-            break
-        
-        # if viewer.window.key_press('q'):
-        #     # q: quit the script and stop collecting data. Save trajectories and optionally videos.
-        #     # c: stop this episode and record the trajectory and move on to a new episode
-        #     # r: restart
-        #     key = ord('q')
-        #     break
-        # elif viewer.window.key_press('c'): 
-        #     key = ord('c')
-        #     break
-        # elif viewer.window.key_press('r'):
-        #     key = ord('r')
-        #     break
-
-        # frames.append(current_frame)
-        elapsed_timesteps = info["elapsed_steps"].item()
-        elapsed_simtime = elapsed_timesteps * sim_dt_bw_step
-        elapsed_realtime = time.perf_counter() - start_time
-        # time_to_sleep = sim_dt_bw_step - elapsed_time
-        time_to_sleep = elapsed_simtime - elapsed_realtime
-        if time_to_sleep > 0:
-            time.sleep(time_to_sleep)
-        if elapsed_timesteps % 25 == 0:
-            print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
-            # EE_pos = obs['extra']['end_effector_pose'][0, :3].cpu().numpy()
-            # q_pos = obs['agent']['qpos'][0].cpu().numpy()
-            # print(f"EE pos: {EE_pos}")
-            # print(f"q pos: {q_pos}")
-            print(f"reward: {reward} | success: {info['success']} | peg_head_pos_at_hole: {info['peg_head_pos_at_hole']} | grasped_object_is_possibly_grasped: {info['grasped_object_is_possibly_grasped']} | end_effector_past_midline_of_peg: {info['end_effector_past_midline_of_peg']}")
-
-    if key == ord('q'):
-        num_trajs += 1
-        break
-    elif key == ord('c'):
-        seed += 1
-        num_trajs += 1
-        env.reset(seed=seed)
-        # viewer = env.render_human()
-        spacemouse_input.reset()
-        continue
-    elif key == ord('r'):
-        env.reset(seed=seed, options=dict(save_trajectory=False))
-        # viewer = env.render_human()
-        spacemouse_input.reset()
-        continue
-    else:
-        break
-# plt.ioff()
-# plt.show()
-cv2.destroyAllWindows()
+with imageio.get_writer(path_to_video / 'book_insertion_reset_dist.mp4', fps=fps, quality=quality) as video_writer:
+    for seed in range(start_seed, start_seed + num_seeds):
+        obs, info = env.reset(seed=seed)
+        current_frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
+        video_writer.append_data(current_frame)
 #%%
 # if record_demonstrations:
 #     h5_file_path = env._h5_file.copy

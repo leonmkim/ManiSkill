@@ -1,5 +1,4 @@
 #%%
-import transformers
 
 import gymnasium as gym
 import tqdm
@@ -13,7 +12,7 @@ import os
 
 import zarr
 ZARR_VERSION=int(zarr.__version__.split('.')[0])
-
+from transformers import AutoModel
 import time
 import json
 
@@ -322,7 +321,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, theia_model_string, desi
     # # PCA sandbox
     # # #################################
     #%%
-    # from transformers import AutoImageProcessor, AutoModel
+    
     # from PIL import Image
     # processor = AutoImageProcessor.from_pretrained("facebook/dinov2-with-registers-base")
     # model = AutoModel.from_pretrained("facebook/dinov2-with-registers-base")

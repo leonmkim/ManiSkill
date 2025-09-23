@@ -29,8 +29,8 @@ import cv2
 
 import time
 
-from mani_skill.utils.teleoperation import SpacemouseInput
-spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,0,0,1])
+# from mani_skill.utils.teleoperation import SpacemouseInput
+# spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,0,0,1])
 desired_viewing_size = (256, 256)
 
 ## testing book insertion task
@@ -39,7 +39,7 @@ joint_damping = 2*np.sqrt(joint_stiffness)
 env = gym.make(
     # "LiftPegUpright-v1", 
     "PegInsertionSideCustom-v1", 
-    cam_resize_factor=0.5,
+    cam_resize_factor=1.0,
     reward_mode="none", 
     sim_backend='physx_cpu', 
     render_mode="rgb_array", 
@@ -351,115 +351,18 @@ obs, info = env.reset(seed=seed)
 
 # plt.tight_layout()
 #%%
-while True:
-    start_time = time.perf_counter()
-    while True:
-        # action = env.action_space.sample()
-        action, _ = spacemouse_input.get_action()
-        obs, reward, terminated, truncated, info = env.step(action)
-
-        # O_FT_EE = obs['extra']['W_FT_EE'] # Bx6
-
-        # force_torque_queue = np.roll(force_torque_queue, -1, axis=0)
-        # force_torque_queue[-1] = O_FT_EE[0, :].cpu().numpy()
-        # # force_torque_queue[-1] = O_v_EE[0, :, 0].cpu().numpy()
-
-        # line_fx.set_ydata(force_torque_queue[:, 0])
-        # line_fy.set_ydata(force_torque_queue[:, 1])
-        # line_fz.set_ydata(force_torque_queue[:, 2])
-
-        # line_tx.set_ydata(force_torque_queue[:, 3])
-        # line_ty.set_ydata(force_torque_queue[:, 4])
-        # line_tz.set_ydata(force_torque_queue[:, 5])
-
-        # # env.render_human()
-
-        # fig.canvas.draw()
-        # fig.canvas.flush_events()
-        # plt.pause(0.001)
-
-        current_frame = cv2.cvtColor(env.render_rgb_array()[0].cpu().numpy(), cv2.COLOR_RGB2BGR)
-        # current_frame = cv2.cvtColor(obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy(), cv2.COLOR_RGB2BGR)
-        # # draw a 144x144 box around the end effector pixel
-        # end_effector_pixel_coordinates = obs['extra']['end_effector_pixel_coordinates'][0].cpu().numpy()
-        # x, y = end_effector_pixel_coordinates[:2]
-        # cv2.rectangle(current_frame, (x - 72, y - 72), (x + 72, y + 72), (0, 255, 0), 2)
-
-        # current_frame = obs['sensor_data']['base_camera']['Color'][0][:,:,:3].cpu().numpy()
-
-        # current_frame = (current_frame*0.5 + obs['extra']['extrinsic_contact_map'][0].cpu().numpy()*255*0.5).astype(np.uint8)
-        # current_frame = cv2.resize(current_frame, desired_viewing_size, interpolation=cv2.INTER_NEAREST)
-
-        # current_frame = np.hstack((current_frame,((obs['extra']['env_normals_map'][0].cpu().numpy() + 1.0) * (255/2.0)).astype(np.uint8)))
-        # concatenate horizontally a second frame
-        # current_frame = np.hstack((current_frame,((obs['extra']['EE_normals_map'][0].cpu().numpy() + 1.0) * (255/2.0)).astype(np.uint8)))
-
-        # EE_dtc_map = np.clip(obs['extra']['EE_dtc_map'][0].cpu().numpy(), 0, 0.2)
-        # env_dtc_map = np.clip(obs['extra']['env_dtc_map'][0].cpu().numpy(), 0, 0.2)
-        # assert env_dtc_map.ndim == 3, f"Expected 3D array, got {env_dtc_map.ndim}D with shape {env_dtc_map.shape}"
-        # assert env_dtc_map.shape[-1] == 1, f"Expected 1 channel, got {env_dtc_map.shape[-1]} channels with shape {env_dtc_map.shape}"
-        # combined_dtc_map = np.minimum(EE_dtc_map, env_dtc_map)
-        # assert combined_dtc_map.ndim == 3, f"Expected 3D array, got {combined_dtc_map.ndim}D with shape {combined_dtc_map.shape}"
-        # assert combined_dtc_map.shape[-1] == 1, f"Expected 1 channel, got {combined_dtc_map.shape[-1]} channels with shape {combined_dtc_map.shape}"
-
-        # combined_dtc_map = ((-1*combined_dtc_map + 0.2) * (255/0.2)).astype(np.uint8)
-        # combined_dtc_map = cv2.applyColorMap(combined_dtc_map, cv2.COLORMAP_BONE)
-        # current_frame = np.hstack((current_frame, combined_dtc_map))
-
-        cv2.imshow("frame", current_frame)
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q') or key == ord('c') or key == ord('r'):
-            break
-        
-        # if viewer.window.key_press('q'):
-        #     # q: quit the script and stop collecting data. Save trajectories and optionally videos.
-        #     # c: stop this episode and record the trajectory and move on to a new episode
-        #     # r: restart
-        #     key = ord('q')
-        #     break
-        # elif viewer.window.key_press('c'): 
-        #     key = ord('c')
-        #     break
-        # elif viewer.window.key_press('r'):
-        #     key = ord('r')
-        #     break
-
-        # frames.append(current_frame)
-        elapsed_timesteps = info["elapsed_steps"].item()
-        elapsed_simtime = elapsed_timesteps * sim_dt_bw_step
-        elapsed_realtime = time.perf_counter() - start_time
-        # time_to_sleep = sim_dt_bw_step - elapsed_time
-        time_to_sleep = elapsed_simtime - elapsed_realtime
-        if time_to_sleep > 0:
-            time.sleep(time_to_sleep)
-        if elapsed_timesteps % 25 == 0:
-            print(f"realtime_factor: {elapsed_simtime/elapsed_realtime} | elapsed steps: {elapsed_timesteps} | elapsed rt {elapsed_realtime} | elapsed simt {elapsed_simtime}")
-            # EE_pos = obs['extra']['end_effector_pose'][0, :3].cpu().numpy()
-            # q_pos = obs['agent']['qpos'][0].cpu().numpy()
-            # print(f"EE pos: {EE_pos}")
-            # print(f"q pos: {q_pos}")
-            print(f"reward: {reward} | success: {info['success']} | peg_head_pos_at_hole: {info['peg_head_pos_at_hole']} | grasped_object_is_possibly_grasped: {info['grasped_object_is_possibly_grasped']} | end_effector_past_midline_of_peg: {info['end_effector_past_midline_of_peg']}")
-
-    if key == ord('q'):
-        num_trajs += 1
-        break
-    elif key == ord('c'):
-        seed += 1
-        num_trajs += 1
-        env.reset(seed=seed)
-        # viewer = env.render_human()
-        spacemouse_input.reset()
-        continue
-    elif key == ord('r'):
-        env.reset(seed=seed, options=dict(save_trajectory=False))
-        # viewer = env.render_human()
-        spacemouse_input.reset()
-        continue
-    else:
-        break
-# plt.ioff()
-# plt.show()
-cv2.destroyAllWindows()
+num_seeds = 50
+start_seed = 0
+import imageio
+fps = 15
+quality = 8
+path_to_video = Path("./paper_peg_insertion_vids")
+path_to_video.mkdir(parents=True, exist_ok=True)
+with imageio.get_writer(path_to_video / 'peg_insertion_reset_dist.mp4', fps=fps, quality=quality) as video_writer:
+    for seed in range(start_seed, start_seed + num_seeds):
+        obs, info = env.reset(seed=seed)
+        current_frame = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
+        video_writer.append_data(current_frame)
 #%%
 # if record_demonstrations:
 #     h5_file_path = env._h5_file.copy
