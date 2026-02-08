@@ -29,8 +29,10 @@ import cv2
 import time
 
 from mani_skill.utils.teleoperation import SpacemouseInput
-spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,1,1,1])
-desired_viewing_size = (256, 256)
+
+#%%
+# spacemouse_input = SpacemouseInput(sixd_mask=[1,1,1,1,1,1])
+# desired_viewing_size = (256, 256)
 
 ## testing book insertion task
 joint_stiffness = 100.0
@@ -49,6 +51,7 @@ env = gym.make(
     render_dtc_maps=True,
     render_normals_maps=True,
     render_contact_forces_map=True,
+    cam_extrinsic_rotation_angle=np.deg2rad(-90),
     book_ends_config=BookEndsConfig(
         mode='spring',
         height=0.25,
@@ -101,41 +104,84 @@ env = gym.make(
     )
 )
 #%%
-# # ##########################
-# # Render and save a video of the contact forces map overlaid on the RGB image
-# # ##########################
-# obs, info = env.reset(seed=0)
+root_folder_camera_rotation_vids = Path("./camera_extrinsic_rotation_videos")
+root_folder_camera_rotation_vids.mkdir(parents=True, exist_ok=True)
+
+# ##########################
+# Render and save a video of the contact forces map overlaid on the RGB image
+# ##########################
+obs, info = env.reset(seed=0)
+#%%
+first_cam_observation = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
+# save the first frame as an image
+name_of_image = f"camera_rotation_{np.rad2deg(env.cam_extrinsic_rotation_angle):.1f}_degrees_first_frame.png"
+# name_of_image = f"orig_camera_rotation_first_frame.png"
+cv2.imwrite(str(root_folder_camera_rotation_vids / name_of_image), cv2.cvtColor(first_cam_observation, cv2.COLOR_RGB2BGR))
+#%%
+# load the images in the directory and make a small video out of them to visualize the camera rotation
+from natsort import natsorted
+images_in_folder = natsorted(list(root_folder_camera_rotation_vids.glob("*_degrees_first_frame.png")))
+images_for_video = []
+for img_path in images_in_folder:
+    img = cv2.imread(str(img_path))
+    images_for_video.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+# duplicate the list but going backwards to create a looping video
+images_for_video = images_for_video + images_for_video[::-1]
+images_to_video(
+    images_for_video,
+    output_dir=root_folder_camera_rotation_vids,
+    video_name="camera_rotation_first_frames",
+    fps=5,
+    quality=10,
+)
+    
+
+
+#%%
 # force_map_overlaid = []
+cam_observations = []
 # blend_alpha = 0.2
-# for i in tqdm.tqdm(range(15)):
-# # while True:
-#     action = env.action_space.sample()
-#     # action, _ = spacemouse_input.get_action()
-#     obs, reward, terminated, truncated, info = env.step(action)
+for i in tqdm.tqdm(range(15)):
+# while True:
+    action = env.action_space.sample()
+    # action, _ = spacemouse_input.get_action()
+    obs, reward, terminated, truncated, info = env.step(action)
 
-#     # convert forces to normals coloring
-#     max_force_magnitude = 0.005
-#     contact_forces_map = obs['extra']['extrinsic_contact_forces_map'][0].cpu().numpy()
-#     contact_forces_map = contact_forces_map / max_force_magnitude
-#     contact_forces_map = np.clip(contact_forces_map, -1, 1)
-#     contact_forces_map = (contact_forces_map + 1) / 2.0 * 255
-#     contact_forces_map = contact_forces_map.astype(np.uint8)
+    # convert forces to normals coloring
+    max_force_magnitude = 0.005
+    contact_forces_map = obs['extra']['extrinsic_contact_forces_map'][0].cpu().numpy()
+    contact_forces_map = contact_forces_map / max_force_magnitude
+    contact_forces_map = np.clip(contact_forces_map, -1, 1)
+    contact_forces_map = (contact_forces_map + 1) / 2.0 * 255
+    contact_forces_map = contact_forces_map.astype(np.uint8)
 
-#     rgb_image = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
+    rgb_image = obs['sensor_data']['base_camera']['rgb'][0].cpu().numpy()
 
-#     force_map_overlay = (rgb_image* blend_alpha + contact_forces_map * (1 - blend_alpha)).astype(np.uint8)
-#     force_map_overlaid.append(force_map_overlay)
-# #%%
-# video_path = Path("./")
-# images_to_video(
-#     force_map_overlaid,
-#     output_dir=video_path,
-#     video_name="force_map_overlaid",
-#     fps=20,
-#     quality=10,
+    cam_observations.append(rgb_image)
 
-# )
-# #%%
+    # force_map_overlay = (rgb_image* blend_alpha + contact_forces_map * (1 - blend_alpha)).astype(np.uint8)
+    # force_map_overlaid.append(force_map_overlay)
+#%%
+video_path = root_folder_camera_rotation_vids
+images_to_video(
+    # force_map_overlaid,
+    cam_observations,
+    output_dir=video_path,
+    # video_name="force_map_overlaid",
+    video_name=f"camera_rotation_{np.rad2deg(env.cam_extrinsic_rotation_angle):.1f}_degrees",
+    fps=20,
+    quality=10,
+
+)
+#%%
+world_tf_root = env.agent.robot.get_pose()
+
+look_at = world_tf_root.raw_pose[0,:3] + torch.tensor([0.,0,0.25])
+eye = torch.tensor([1.05775+.615, 0, 0.375615])
+look_at_to_eye = eye - look_at
+# traverse along look_at_to_eye vector to find a point that is  0.5489 along x axis of the world frame
+new_look_at = look_at + look_at_to_eye * (0.5489 / look_at_to_eye[0])
+#%%
 # plt.imshow(rgb_image)
 # plt.imshow(contact_forces_map, alpha=0.7)
 # #%%
