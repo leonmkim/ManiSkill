@@ -87,10 +87,12 @@ def construct_env_state_dict(zarr_data, index):
 @click.argument('path-to-demo-root-dir', type=click.Path(exists=True, path_type=Path))
 @click.argument('demo-name', type=str)
 @click.argument('task-gym-name', type=str)
+@click.argument("record-contact-map", type=bool)
 @click.argument("record-contact-features", type=bool)
 @click.argument("record-extrinsic-contact-forces-maps", type=bool)
 @click.argument("record-external-end_effector-wrench", type=bool)
-def main(episode_idx, path_to_demo_root_dir, demo_name, task_gym_name, record_contact_features, record_extrinsic_contact_forces_maps, record_external_end_effector_wrench):
+@click.argument('cam-extrinsic-rotation-angle-deg', type=float)
+def main(episode_idx, path_to_demo_root_dir, demo_name, task_gym_name, record_contact_map, record_contact_features, record_extrinsic_contact_forces_maps, record_external_end_effector_wrench, cam_extrinsic_rotation_angle_deg):
     # path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/424_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_slotrand_20hz_act")
     # path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/1_demo_test")
     # path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/2_demo_test")
@@ -109,6 +111,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_gym_name, record_co
     # record_extrinsic_contact_forces_maps = True
     # record_external_end_effector_wrench = True
     max_num_contact = 50
+    
     #%%
     zarr_store = zarr.open(str(path_to_zarr), mode='r+')
     with open(path_to_json, 'r') as f:
@@ -200,16 +203,24 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_gym_name, record_co
     # create the datasets for contact features if they don't exist
     image_shape = zarr_store['data']['observation.rgb'].shape[1:3]
     zarr_data = zarr_store['data']
-    zarr_gt_contact = zarr_store['data']['gt_contact']
     if 'episode_data' not in zarr_store:
         zarr_store.create_group('episode_data')
     if f'episode_{episode_idx}' not in zarr_store['episode_data']:
         zarr_store['episode_data'].create_group(f'episode_{episode_idx}')
     zarr_episode_data = zarr_store['episode_data'][f'episode_{episode_idx}']
+
+    if cam_extrinsic_rotation_angle_deg != 0.0:
+        rerender_group_name = f"rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
+        cam_extrinsic_rotation_angle = np.deg2rad(cam_extrinsic_rotation_angle_deg)
+        zarr_episode_data = zarr_episode_data.require_group(rerender_group_name)
+
     if 'gt_contact' not in zarr_episode_data:
         zarr_episode_data.create_group('gt_contact')
     zarr_episode_data_gt_contact = zarr_episode_data['gt_contact']
 
+    if record_contact_map:
+        zarr_episode_data_gt_contact.create_array('observation.contact_map', shape=(0,) + image_shape + (1,), chunks=(1,) + image_shape + (1,), dtype=np.float32, compressor=compressors, overwrite=True)
+        keys_to_check.append('gt_contact/observation.contact_map')
     if record_contact_features:
         # if 'observation.EE_dtc_map' not in zarr_gt_contact:
         zarr_episode_data_gt_contact.create_array('observation.EE_dtc_map', shape=(0,) + image_shape + (1,), chunks=(1,) + image_shape + (1,), dtype=np.float32, compressor=compressors, overwrite=True)
@@ -264,10 +275,11 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_gym_name, record_co
             reward_mode="none", 
             sim_backend='physx_cpu', 
             render_mode="rgb_array",
-            render_contact_map=False,
+            render_contact_map=record_contact_map,
             render_dtc_maps=False,
             render_normals_maps=False,
             suppress_evaluation=True, 
+            cam_extrinsic_rotation_angle=cam_extrinsic_rotation_angle,
             book_ends_config=BookEndsConfig(
                 mode='spring',
                 height=0.25,
@@ -422,6 +434,8 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_gym_name, record_co
         current_env_state_dict = construct_env_state_dict(zarr_store['data'], env_state_episode_start_idx)
         env.set_state_dict(current_env_state_dict)
     #%%
+    if record_contact_map:
+        zarr_episode_data_gt_contact['observation.contact_map'].append(obs['extra']['extrinsic_contact_map'].cpu().numpy())
     if record_contact_features:
         env_mesh_list, env_mesh = env.get_env_object_meshes()
         EE_object_mesh_list, EE_object_mesh = env.get_grasped_object_mesh()
@@ -470,6 +484,8 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_gym_name, record_co
 
         # don't save if its the last step
         if i < num_steps - 1:
+            if record_contact_map:
+                zarr_episode_data_gt_contact['observation.contact_map'].append(obs['extra']['extrinsic_contact_map'].cpu().numpy())
             #%%
             if record_contact_features:
                 # the obs from the env already has a dimension at the beginning for num_envs
