@@ -4,145 +4,152 @@ import zarr
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-#%%
-# path_to_file = Path(__file__).parents[2] / 'episodes_with_missing_data.txt'
-# # read the txt file with episode idxs with missing data
-# with open(path_to_file, 'r') as f:
-#     episode_indices_missing_data = [int(line.strip()) for line in f.readlines()]
-#     print(f"Found {len(episode_indices_missing_data)} episodes with missing data.")
-# #%%
-# # extract unique indices from the list
-# unique_episode_indices_missing_data = list(set(episode_indices_missing_data))
-# print(f"Found {len(unique_episode_indices_missing_data)} unique episodes with missing data.")
-#%%
-# # convert this list to a slurm sbatch array string
-# # for contiguous indices, use the format 0-10
-# # for non-contiguous indices, use the format 0,1,2,3,
-# slurm_array_string = ''
-# if len(unique_episode_indices_missing_data) == 0:
-#     print("No episodes with missing data found.")
-# else:
-#     unique_episode_indices_missing_data.sort()
-#     start_idx = unique_episode_indices_missing_data[0]
-#     end_idx = start_idx
-#     for idx in unique_episode_indices_missing_data[1:]:
-#         if idx == end_idx + 1:
-#             end_idx = idx
-#         else:
-#             if start_idx == end_idx:
-#                 slurm_array_string += f"{start_idx},"
-#             else:
-#                 slurm_array_string += f"{start_idx}-{end_idx},"
-#             start_idx = idx
-#             end_idx = start_idx
-#     if start_idx == end_idx:
-#         slurm_array_string += f"{start_idx}"
-#     else:
-#         slurm_array_string += f"{start_idx}-{end_idx}"
-# %%
 
-# path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act/demos.zarr")
+# %%
+path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act/demos.zarr")
 # path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/638_sim_nominal_demos_peginsertion_20hz_act/demos.zarr")
 # path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/269_sim_recovery_demos_peginsertion_20hz_act/demos.zarr")
 # path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expert_demos/frankagym/FrankaInsertion-v1/907_sim_all_demos_peginsertion_20hz_act/demos.zarr")
 # path_to_zarr = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1/2_demo_test/demos.zarr")
-path_to_zarr = Path("/mnt/12_tb_hdd/fish_contact_backup/FISH/expert_demos/frankagym/FrankaInsertion-v1/907_sim_all_demos_peginsertion_20hz_act/demos.zarr")
-
+# path_to_zarr = Path("/mnt/12_tb_hdd/fish_contact_backup/FISH/expert_demos/frankagym/FrankaInsertion-v1/907_sim_all_demos_peginsertion_20hz_act/demos.zarr")
+assert path_to_zarr.exists(), f"could not find zarr at {path_to_zarr}"
 zarr_store = zarr.open(path_to_zarr, mode='r+')
 #%%
-episode_lengths = np.diff(np.hstack([np.array([0]), zarr_store['meta']['episode_ends'][:]]))
-max_demo_length = episode_lengths.max()
+def format_slurm_array_string(episode_indices):
+    episode_indices.sort()
+    slurm_array_string = ''
+    start_idx = episode_indices[0]
+    end_idx = start_idx
+    for idx in episode_indices[1:]:
+        if idx == end_idx + 1:
+            end_idx = idx
+        else:
+            if start_idx == end_idx:
+                slurm_array_string += f"{start_idx},"
+            else:
+                slurm_array_string += f"{start_idx}-{end_idx},"
+            start_idx = idx
+            end_idx = start_idx
+    if start_idx == end_idx:
+        slurm_array_string += f"{start_idx}"
+    else:
+        slurm_array_string += f"{start_idx}-{end_idx}"
+    return slurm_array_string
 #%%
-zarr_store['meta'].attrs['max_demo_length'] = int(max_demo_length)
+dry_run=False
+cam_extrinsic_rotation_angle_deg = float(-30)
+list_of_arrays_to_check = list()
+list_of_arrays_to_check.append(
+    dict(
+        root_path='',
+        array_names=[
+            'observation.rgb',
+            'observation.depth',
+            'observation.EE_pixel_coord',
+        ]
+    )
+)
+list_of_arrays_to_check.append(
+    dict(
+        root_path='gt_contact',
+        array_names=[
+            'observation.env_dtc_map',
+            'observation.env_normals_map',
+            'observation.EE_dtc_map',
+            'observation.EE_normals_map',
+        ]
+    )
+)
+list_of_arrays_to_check.append(
+    dict(
+        root_path='gt_segmentation',
+        array_names=[
+            'observation.EE_obj_mask',
+            'observation.segmentation',
+        ]
+    )
+)
 #%%
-# gt_model_group_name = 'gt_contact'
-# estimated_model_group_name = 'gt_contact'
-# data_array_names_list = [
-#     'observation.EE_dtc_map',
-#     'observation.EE_normals_map',
-#     'observation.env_dtc_map',
-#     'observation.env_normals_map',
-# ]
-
-# gt_model_group_name = 'gt_segmentation'
-# estimated_model_group_name = 'sam2-hiera-base-plus'
-# mask_data_array_name = 'observation.EE_obj_mask'
-# data_array_names_list = [
-#     mask_data_array_name,
-# ]
-#%%
-# estimated_model_group_name = 'theia-base-patch16-224-cdiv_15x20'
-# x_norm_patchtokens_array_name = 'observation.x_norm_patchtokens'
-# # x_norm_clstoken_array_name = 'observation.x_norm_clstoken'
-# # x_norm_regtokens_array_name = 'observation.x_norm_regtokens'
-# data_array_names_list = [
-#     # mask_data_array_name,
-#     x_norm_patchtokens_array_name,
-#     # x_norm_clstoken_array_name,
-#     # x_norm_regtokens_array_name
-# ]
-
-#%%
-# episode_idx = 639
-# episode_start_idx = zarr_store['meta']['episode_ends'][episode_idx - 1] if episode_idx > 0 else 0
-# episode_end_idx = zarr_store['meta']['episode_ends'][episode_idx]
-# idx_within_episode = 120
-# global_idx = episode_start_idx + idx_within_episode
-# mask = zarr_store['data'][estimated_model_group_name][mask_data_array_name][global_idx]
-# rgb_image = zarr_store['data']['observation.rgb'][global_idx]
-# #%%
-# plt.imshow(rgb_image)
-# plt.imshow(mask, cmap='gray', alpha=0.5)
-#%%
-gt_model_group_name = 'gt_contact'
-# estimated_model_group_name = 'contact_model_175604_2_epoch_9'
-estimated_model_group_name = 'contact_model_197406_2_epoch_8'
-
-contact_map_data_array_name = 'observation.contact_map'
-# EE_dtc_data_array_name = 'observation.EE_dtc_map'
-# env_dtc_data_array_name = 'observation.env_dtc_map'
-# EE_normals_data_array_name = 'observation.EE_normals_map'
-# env_normals_data_array_name = 'observation.env_normals_map'
-data_array_names_list = [
-    contact_map_data_array_name,
-    # EE_dtc_data_array_name,
-    # env_dtc_data_array_name,
-    # EE_normals_data_array_name,
-    # env_normals_data_array_name
-]
-
-# %%
 episode_lengths = np.diff(np.hstack([np.array([0]), zarr_store['meta']['episode_ends'][:]]))
 # %%
-episode_indices_missing_data = []
+# episode_indices_missing_data = []
+episode_indices_missing_data = dict()
 all_episodes_complete = False
 for episode_idx, episode_length in enumerate(episode_lengths):
-    episode_first_data_array_length = None
-    for data_array_name in data_array_names_list:
-        # if data_array_name in zarr_store['episode_data'][f'episode_{i}'][estimated_model_group_name]:
-        try:
-            episode_data_array_length = zarr_store['episode_data'][f'episode_{episode_idx}'][estimated_model_group_name][data_array_name].shape[0]
-        except:
-            print(f"Episode {episode_idx} does not have data array {data_array_name}.")
-            episode_indices_missing_data.append(episode_idx)
-            break
-        if episode_first_data_array_length is None:
-            episode_first_data_array_length = episode_data_array_length
-        if episode_data_array_length != episode_first_data_array_length:
-            print(f"Episode {episode_idx} data array {data_array_name} length {episode_data_array_length} does not match first data array length {episode_first_data_array_length}.")
-            break
+    # traverse the list of arrays to check and verify that each array exists for the current episode and has the correct length
+    episode_path = f'episode_data/episode_{episode_idx}'
+    if cam_extrinsic_rotation_angle_deg != 0:
+        episode_path += f"/rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
+        
+    for array_info in list_of_arrays_to_check:
+        root_path = array_info['root_path']
+        for array_name in array_info['array_names']:
+            array_path = array_name if root_path == '' else root_path + '/' + array_name
 
-        # assert episode_data_array_length == episode_first_data_array_length, f"Episode {episode_idx} data array {data_array_name} length {episode_data_array_length} does not match first data array length {episode_first_data_array_length}."
-        # assert episode_data_array_length == episode_length, f"Episode {episode_idx} length {episode_length} does not match mask length {episode_data_array_length}."
-    if episode_length != episode_first_data_array_length:
-        episode_indices_missing_data.append(episode_idx)
-        print(f"Episode {episode_idx} has missing data: length {episode_length}, first data array length {episode_first_data_array_length}.")
+            # if array_path not in zarr_store['episode_data'][f'episode_{episode_idx}']:
+            if array_path not in zarr_store[episode_path]:
+                print(f"Episode {episode_idx} is missing array {array_name} in group {root_path}.")
+                # episode_indices_missing_data.append(episode_idx)
+                if episode_idx not in episode_indices_missing_data:
+                    episode_indices_missing_data[episode_idx] = []
+                episode_indices_missing_data[episode_idx].append(array_path)
+            else:
+                episode_data_array_length = zarr_store[episode_path][array_path].shape[0]
+                if episode_data_array_length != episode_length:
+                    print(f"Episode {episode_idx} array {array_name} in group {root_path} has length {episode_data_array_length} but expected length is {episode_length}.")
+                    # episode_indices_missing_data.append(episode_idx)
+                    if episode_idx not in episode_indices_missing_data:
+                        episode_indices_missing_data[episode_idx] = []
+                    episode_indices_missing_data[episode_idx].append(array_path)
+#%%
 if len(episode_indices_missing_data) > 0:
     print(f"Found {len(episode_indices_missing_data)} episodes with missing data: {episode_indices_missing_data}")
-    # output list of indices of episodes with missing data to a text file
-    with open('episodes_with_missing_data.txt', 'w') as f:
-        for episode_idx in episode_indices_missing_data:
-            f.write(f"{episode_idx}\n")
+    # reformat into categories of missing data
+    missing_base_group_episodes = list()
+    base_group_arrays = [
+            'observation.rgb',
+            'observation.depth',
+            'observation.EE_pixel_coord',
+            'gt_segmentation/observation.EE_obj_mask',
+            'gt_segmentation/observation.segmentation',
+            ]
+    missing_contact_group_episodes = list()
+    contact_group_arrays = [
+            'gt_contact/observation.env_dtc_map',
+            'gt_contact/observation.env_normals_map',
+            'gt_contact/observation.EE_dtc_map',
+            'gt_contact/observation.EE_normals_map',
+            ]
+    for episode_idx, missing_arrays in episode_indices_missing_data.items():
+        for missing_array in missing_arrays:
+            if missing_array in base_group_arrays:
+                missing_base_group_episodes.append(episode_idx)
+            elif missing_array in contact_group_arrays:
+                missing_contact_group_episodes.append(episode_idx)
+
+    # extract unique episode indices for each category
+    missing_base_group_episodes = list(set(missing_base_group_episodes))
+    missing_contact_group_episodes = list(set(missing_contact_group_episodes))
+    print(f"Found {len(missing_base_group_episodes)} episodes with missing data in base group: {missing_base_group_episodes}")
+    # format into slurm compatible array string
+    
+    if len(missing_base_group_episodes) > 0:
+        missing_base_group_slurm_array_string = format_slurm_array_string(missing_base_group_episodes)
+        missing_base_group_filename = 'episodes_with_missing_base_group_data'
+        if cam_extrinsic_rotation_angle_deg != 0:
+            missing_base_group_filename += f"_rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
+        path_to_missing_base_group_file = missing_base_group_filename + '.txt'
+        with open(path_to_missing_base_group_file, 'w') as f:
+            f.write(missing_base_group_slurm_array_string)
+    if len(missing_contact_group_episodes) > 0:
+        missing_contact_group_slurm_array_string = format_slurm_array_string(missing_contact_group_episodes)
+        # save these slurm array strings to text files
+        missing_contact_group_filename = 'episodes_with_missing_contact_group_data'
+        if cam_extrinsic_rotation_angle_deg != 0:
+            missing_contact_group_filename += f"_rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
+        path_to_missing_contact_group_file = missing_contact_group_filename + '.txt'
+        with open(path_to_missing_contact_group_file, 'w') as f:
+            f.write(missing_contact_group_slurm_array_string)
 else:
     print("All episodes have complete data for all data arrays.")
     all_episodes_complete = True
@@ -150,33 +157,82 @@ if not all_episodes_complete:
     print("Not all episodes have complete data for all data arrays. Exiting.")
     exit(1)
 # %%
-# move all episode data to a new group under data
-if estimated_model_group_name not in zarr_store['data']:
-    zarr_store.create_group('data/' + estimated_model_group_name)
-    print(f"Created group {estimated_model_group_name} in zarr dataset.")
+# # move all episode data to a new group under data
+zarr_store_data = zarr_store['data']
+zarr_store_meta = zarr_store['meta']
 
-for data_array_name in data_array_names_list:
-    if data_array_name not in zarr_store['data'][estimated_model_group_name]:
-        original_data_array_shape = zarr_store['episode_data']['episode_0'][estimated_model_group_name][data_array_name].shape[1:]
-        original_data_array_dtype = zarr_store['episode_data']['episode_0'][estimated_model_group_name][data_array_name].dtype
-        original_data_array_compressors = zarr_store['episode_data']['episode_0'][estimated_model_group_name][data_array_name].compressors
-        zarr_store.create_array('data/' + estimated_model_group_name + '/' + data_array_name, shape=(0, *original_data_array_shape), chunks=(1, *original_data_array_shape), dtype=original_data_array_dtype, compressors=original_data_array_compressors)
+first_episode_path = f'episode_data/episode_0'
+if cam_extrinsic_rotation_angle_deg != 0:
+    first_episode_path += f"/rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
+    if f'rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation' not in zarr_store_data:
+        zarr_store_data.create_group(f'rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation')
+    zarr_store_data = zarr_store_data[f'rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation']
+    
+    if f'rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation' not in zarr_store_meta:
+        zarr_store_meta.create_group(f'rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation')
+    zarr_store_meta = zarr_store_meta[f'rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation']
+    if 'episode_cam_tf_world' not in zarr_store_meta:
+        zarr_store_meta.create_array('episode_cam_tf_world', shape=(0, 4, 4), chunks=(1, 4, 4), dtype=np.float32, overwrite=True)
 
-# %%
-for data_array_name in data_array_names_list:
-    # for episode_idx in tqdm(range(len(episode_lengths))):
-    for episode_idx, episode_length in tqdm(enumerate(episode_lengths)):
-        if data_array_name in zarr_store['episode_data'][f'episode_{episode_idx}'][estimated_model_group_name]:
-            # check if the array has already been added to the data group
-            nominal_episode_ends = zarr_store['meta']['episode_ends'][episode_idx]
-            current_data_array_length = zarr_store['data'][estimated_model_group_name][data_array_name].shape[0]
-            if current_data_array_length < nominal_episode_ends:
-                episode_data_array = zarr_store['episode_data'][f'episode_{episode_idx}'][estimated_model_group_name][data_array_name][:]
-                zarr_store['data'][estimated_model_group_name][data_array_name].append(episode_data_array)
-            else:
-                print(f"Skipping episode {episode_idx} for data array {data_array_name} as it has already been added to the data group.")
-            del zarr_store['episode_data'][f'episode_{episode_idx}'][estimated_model_group_name][data_array_name]
+for array_info in list_of_arrays_to_check:
+    root_path = array_info['root_path']
+    for array_name in array_info['array_names']:
+        array_path = array_name if root_path == '' else root_path + '/' + array_name
+        # make sure all arrays are created under data group with the correct shape, dtype, and compressors
+        if array_path not in zarr_store_data:
+            original_data_array_shape = zarr_store[f'{first_episode_path}/{array_path}'].shape[1:]
+            original_data_array_dtype = zarr_store[f'{first_episode_path}/{array_path}'].dtype
+            original_data_array_compressors = zarr_store[f'{first_episode_path}/{array_path}'].compressors
+            zarr_store_data.create_array(array_path, shape=(0, *original_data_array_shape), chunks=(1, *original_data_array_shape), dtype=original_data_array_dtype, compressors=original_data_array_compressors, overwrite=True)
 
-    assert zarr_store['data'][estimated_model_group_name][data_array_name].shape[0] == zarr_store['meta']['episode_ends'][-1], "Total mask length does not match total ground truth mask length."
+        for episode_idx, episode_length in tqdm(enumerate(episode_lengths), desc=f"Processing episodes for array {array_path}", position=0, leave=True):
+            episode_path = f'episode_data/episode_{episode_idx}'
+            if cam_extrinsic_rotation_angle_deg != 0:
+                episode_path += f"/rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
+            episode_data_array = zarr_store[episode_path][array_path][:]
 
-# %%
+            print(f"adding episode {episode_path} data for array {array_path} to data group. episode data array shape: {episode_data_array.shape}")
+            if not dry_run:
+                zarr_store_data[array_path].append(episode_data_array)
+                del zarr_store[episode_path][array_path]
+
+array_path = 'episode_cam_tf_world'
+for episode_idx, episode_length in tqdm(enumerate(episode_lengths), desc=f"Processing episodes for array {array_path}", position=0, leave=True):
+    episode_path = f'episode_data/episode_{episode_idx}'
+    if cam_extrinsic_rotation_angle_deg != 0:
+        episode_path += f"/rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
+    episode_data_array = zarr_store[episode_path][array_path][:]
+    print(f"adding episode {episode_path} data for array {array_path} to data group. episode data array shape: {episode_data_array.shape}")
+    if not dry_run:
+        zarr_store_meta[array_path].append(episode_data_array)
+        del zarr_store[episode_path][array_path]
+
+# if estimated_model_group_name not in zarr_store['data']:
+#     zarr_store.create_group('data/' + estimated_model_group_name)
+#     print(f"Created group {estimated_model_group_name} in zarr dataset.")
+
+# for data_array_name in data_array_names_list:
+#     if data_array_name not in zarr_store['data'][estimated_model_group_name]:
+#         original_data_array_shape = zarr_store['episode_data']['episode_0'][estimated_model_group_name][data_array_name].shape[1:]
+#         original_data_array_dtype = zarr_store['episode_data']['episode_0'][estimated_model_group_name][data_array_name].dtype
+#         original_data_array_compressors = zarr_store['episode_data']['episode_0'][estimated_model_group_name][data_array_name].compressors
+#         zarr_store.create_array('data/' + estimated_model_group_name + '/' + data_array_name, shape=(0, *original_data_array_shape), chunks=(1, *original_data_array_shape), dtype=original_data_array_dtype, compressors=original_data_array_compressors)
+
+# # %%
+# for data_array_name in data_array_names_list:
+#     # for episode_idx in tqdm(range(len(episode_lengths))):
+#     for episode_idx, episode_length in tqdm(enumerate(episode_lengths)):
+#         if data_array_name in zarr_store['episode_data'][f'episode_{episode_idx}'][estimated_model_group_name]:
+#             # check if the array has already been added to the data group
+#             nominal_episode_ends = zarr_store['meta']['episode_ends'][episode_idx]
+#             current_data_array_length = zarr_store['data'][estimated_model_group_name][data_array_name].shape[0]
+#             if current_data_array_length < nominal_episode_ends:
+#                 episode_data_array = zarr_store['episode_data'][f'episode_{episode_idx}'][estimated_model_group_name][data_array_name][:]
+#                 zarr_store['data'][estimated_model_group_name][data_array_name].append(episode_data_array)
+#             else:
+#                 print(f"Skipping episode {episode_idx} for data array {data_array_name} as it has already been added to the data group.")
+#             del zarr_store['episode_data'][f'episode_{episode_idx}'][estimated_model_group_name][data_array_name]
+
+#     assert zarr_store['data'][estimated_model_group_name][data_array_name].shape[0] == zarr_store['meta']['episode_ends'][-1], "Total mask length does not match total ground truth mask length."
+
+# # %%
