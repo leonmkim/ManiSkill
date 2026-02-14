@@ -171,7 +171,8 @@ from dataset.expert_dataset import ExpertDatasetZarr
 @click.argument('contact_model_id', type=str)
 @click.argument('checkpoint_name', type=str)
 @click.argument('segmentation_model_name', type=str)
-def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkpoint_name, segmentation_model_name):
+@click.argument('cam-extrinsic-rotation-angle-deg', type=float)
+def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkpoint_name, segmentation_model_name, cam_extrinsic_rotation_angle_deg):
     # episode_idx = 0
     # path_to_demo_root_dir = Path("/mnt/crucialSSD/datasetsSSD/fish_datasets/simulated/teleop/FISH/expert_demos/frankagym/FrankaInsertion-v1")
     # demo_name = "1232_sim_w_recovery_demos_leftof4thbook_springbookends_graspedrand_noenvrand_noslotrand_20hz_act"
@@ -210,7 +211,10 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
     contact_model_path = path_to_artifacts / contact_model_id / "checkpoints" / checkpoint_name
     assert contact_model_path.exists(), f"Path {contact_model_path} does not exist. Please check the path."
     camera_K = torch.from_numpy(zarr_dataset['meta']['episode_cam_K'][episode_idx]).to(device)
-    cam_tf_world = torch.from_numpy(zarr_dataset['meta']['episode_cam_tf_world'][episode_idx]).to(device)
+    episode_cam_tf_world_path = 'episode_cam_tf_world'
+    if cam_extrinsic_rotation_angle_deg != 0:
+        episode_cam_tf_world_path = f"rerendered_{float(cam_extrinsic_rotation_angle_deg)}_deg_rotation/"  + episode_cam_tf_world_path
+    cam_tf_world = torch.from_numpy(zarr_dataset['meta'][episode_cam_tf_world_path][episode_idx]).to(device)
     raw_height, raw_width = zarr_dataset['data']['observation.depth'].shape[1:3]
     contact_estimation_model = ContactPredictor(
         contact_model_path,
@@ -224,9 +228,13 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
     #%%
     # for episode_idx in episode_idxs:
     episode_data_group_name = f"episode_data/episode_{episode_idx}"
+    if cam_extrinsic_rotation_angle_deg != 0:
+        episode_data_group_name += f"/rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
+
     if episode_data_group_name not in zarr_dataset:
         zarr_dataset.create_group(episode_data_group_name)
         print(f"Created group {episode_data_group_name} in zarr dataset.")
+
     episode_data_contact_group_name = episode_data_group_name + '/' + contact_model_data_group_name
     if episode_data_contact_group_name not in zarr_dataset:
         zarr_dataset.create_group(episode_data_contact_group_name)
@@ -274,6 +282,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
                                         action_indices_same_as_indices=False,
                                         set_close_gripper_action_for_padding=True,
                                         include_target_pose_observations=True,
+                                        cam_extrinsic_rotation_angle_deg=cam_extrinsic_rotation_angle_deg,
                                         # repeat_padding_for_actions=True,
                                         # action_using_env_state_indices=False,
                                         # stored_action_frame_expression='absolute',
@@ -281,9 +290,12 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, contact_model_id, checkp
                                         )
     dataloader = DataLoader(episode_dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
     #%%
-    gt_contact_map_shape = zarr_dataset['data']['gt_contact']['observation.contact_map'].shape[1:]
-    gt_contact_map_dtype = zarr_dataset['data']['gt_contact']['observation.contact_map'].dtype
-    gt_contact_map_compressors = zarr_dataset['data']['gt_contact']['observation.contact_map'].compressors[0]
+    gt_contact_path = 'gt_contact'
+    if cam_extrinsic_rotation_angle_deg != 0:
+        gt_contact_path = f"rerendered_{float(cam_extrinsic_rotation_angle_deg)}_deg_rotation/" + gt_contact_path
+    gt_contact_map_shape = zarr_dataset['data'][gt_contact_path]['observation.contact_map'].shape[1:]
+    gt_contact_map_dtype = zarr_dataset['data'][gt_contact_path]['observation.contact_map'].dtype
+    gt_contact_map_compressors = zarr_dataset['data'][gt_contact_path]['observation.contact_map'].compressors[0]
 
     gt_EE_dtc_map_shape = gt_contact_map_shape
     gt_EE_dtc_map_dtype = np.float32
