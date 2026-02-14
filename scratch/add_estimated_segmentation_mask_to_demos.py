@@ -71,7 +71,8 @@ from dataset.expert_dataset import ExpertDatasetZarr
 @click.argument('path-to-demo-root-dir', type=click.Path(exists=True, path_type=Path))
 @click.argument('demo-name', type=str)
 @click.argument('task-name', type=str)
-def main(episode_idx, path_to_demo_root_dir, demo_name, task_name):
+@click.argument('cam-extrinsic-rotation-angle-deg', type=float)
+def main(episode_idx, path_to_demo_root_dir, demo_name, task_name, cam_extrinsic_rotation_angle_deg):
     print(f"starting to process episode {episode_idx}...")
     device = 'cuda'
     assert path_to_demo_root_dir.exists(), f"Path {path_to_demo_root_dir} does not exist. Please check the path."
@@ -95,7 +96,6 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_name):
     sam2_options_string = "sam2-hiera-base-plus"
     # sam2_options_string = "sam2.1-hiera-base-plus"
     hf_pretrained_model_name = f"facebook/{sam2_options_string}"
-
 
     if task_name == 'book_insertion':
         '''
@@ -135,6 +135,9 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_name):
     #%%
     # for episode_idx in episode_idxs:
     episode_data_group_name = f"episode_data/episode_{episode_idx}"
+    if cam_extrinsic_rotation_angle_deg != 0:
+        episode_data_group_name += f"/rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
+        
     if episode_data_group_name not in zarr_dataset:
         zarr_dataset.create_group(episode_data_group_name)
         print(f"Created group {episode_data_group_name} in zarr dataset.")
@@ -166,6 +169,7 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_name):
                                         action_indices_same_as_indices=False,
                                         set_close_gripper_action_for_padding=True,
                                         include_target_pose_observations=True,
+                                        cam_extrinsic_rotation_angle_deg=cam_extrinsic_rotation_angle_deg,
                                         # repeat_padding_for_actions=True,
                                         # action_using_env_state_indices=False,
                                         # stored_action_frame_expression='absolute',
@@ -182,8 +186,12 @@ def main(episode_idx, path_to_demo_root_dir, demo_name, task_name):
     ## ##############
     mask_predictor.reset()
     camera_K = zarr_dataset['meta']['episode_cam_K'][episode_idx]
-    cam_tf_world = zarr_dataset['meta']['episode_cam_tf_world'][episode_idx]
+    episode_cam_tf_world_path = 'episode_cam_tf_world'
+    if cam_extrinsic_rotation_angle_deg != 0:
+        episode_cam_tf_world_path = f"rerendered_{float(cam_extrinsic_rotation_angle_deg)}_deg_rotation/"  + episode_cam_tf_world_path
+    cam_tf_world = zarr_dataset['meta'][episode_cam_tf_world_path][episode_idx]
     zarr_dataset.create_array(episode_data_mask_array_name, shape=(0, *gt_mask_shape), chunks=(1, *gt_mask_shape), dtype=gt_mask_dtype, compressors=gt_mask_compressors, overwrite=True)
+
     #%%
     for i, batch in tqdm(enumerate(dataloader)):
     # batch = next(iter(dataloader))
