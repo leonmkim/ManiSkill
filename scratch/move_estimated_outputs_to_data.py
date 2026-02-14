@@ -63,14 +63,38 @@ list_of_arrays_to_check = list()
 #         ]
 #     )
 # )
+# list_of_arrays_to_check.append(
+#     dict(
+#         root_path='gt_contact',
+#         array_names=[
+#             # 'observation.env_dtc_map',
+#             # 'observation.env_normals_map',
+#             # 'observation.EE_dtc_map',
+#             # 'observation.EE_normals_map',
+#             'observation.contact_map'
+#         ]
+#     )
+# )
 list_of_arrays_to_check.append(
     dict(
-        root_path='gt_contact',
+        root_path='contact_model_175604_2_epoch_9',
         array_names=[
-            # 'observation.env_dtc_map',
-            # 'observation.env_normals_map',
-            # 'observation.EE_dtc_map',
-            # 'observation.EE_normals_map',
+            'observation.env_dtc_map',
+            'observation.env_normals_map',
+            'observation.EE_dtc_map',
+            'observation.EE_normals_map',
+            'observation.contact_map'
+        ]
+    )
+)
+list_of_arrays_to_check.append(
+    dict(
+        root_path='contact_model_197406_2_epoch_8',
+        array_names=[
+            'observation.env_dtc_map',
+            'observation.env_normals_map',
+            'observation.EE_dtc_map',
+            'observation.EE_normals_map',
             'observation.contact_map'
         ]
     )
@@ -84,6 +108,14 @@ list_of_arrays_to_check.append(
 #         ]
 #     )
 # )
+list_of_arrays_to_check.append(
+    dict(
+        root_path='sam2-hiera-base-plus',
+        array_names=[
+            'observation.EE_obj_mask',
+        ]
+    )
+)
 #%%
 episode_lengths = np.diff(np.hstack([np.array([0]), zarr_store['meta']['episode_ends'][:]]))
 # %%
