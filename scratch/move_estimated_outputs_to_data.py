@@ -15,6 +15,20 @@ path_to_zarr = Path("/mnt/kostas-graid/datasets/extrinsic_contact_data/FISH/expe
 assert path_to_zarr.exists(), f"could not find zarr at {path_to_zarr}"
 zarr_store = zarr.open(path_to_zarr, mode='r+')
 #%%
+# idx= 50
+# max_contact_prob = 0.05
+# rerender_group = 'rerendered_-30.0_deg_rotation'
+# # rerender_group = 'rerendered_-60.0_deg_rotation'
+# # episode_0_estimated_masks = zarr_store['episode_data']['episode_0']['rerendered_-30.0_deg_rotation']['sam2-hiera-base-plus']['observation.EE_obj_mask'][idx]
+# estimated_contact_map = zarr_store['episode_data']['episode_0'][rerender_group]['contact_model_175604_2_epoch_9']['observation.contact_map'][idx]
+# estimated_contact_map = (np.clip(estimated_contact_map, a_min=0.0, a_max=max_contact_prob)*(255/max_contact_prob)).astype(np.uint8)
+# episode_0_rgb = zarr_store['data'][rerender_group]['observation.rgb'][idx]
+# #%%
+# plt.imshow(episode_0_rgb, alpha=0.5)
+# # plt.imshow(episode_0_estimated_masks,alpha=0.5)
+# plt.imshow(estimated_contact_map, alpha=0.5, cmap='jet')
+
+#%%
 def format_slurm_array_string(episode_indices):
     episode_indices.sort()
     slurm_array_string = ''
@@ -37,38 +51,39 @@ def format_slurm_array_string(episode_indices):
     return slurm_array_string
 #%%
 dry_run=False
-cam_extrinsic_rotation_angle_deg = float(-30)
+cam_extrinsic_rotation_angle_deg = float(-60)
 list_of_arrays_to_check = list()
-list_of_arrays_to_check.append(
-    dict(
-        root_path='',
-        array_names=[
-            'observation.rgb',
-            'observation.depth',
-            'observation.EE_pixel_coord',
-        ]
-    )
-)
+# list_of_arrays_to_check.append(
+#     dict(
+#         root_path='',
+#         array_names=[
+#             'observation.rgb',
+#             'observation.depth',
+#             'observation.EE_pixel_coord',
+#         ]
+#     )
+# )
 list_of_arrays_to_check.append(
     dict(
         root_path='gt_contact',
         array_names=[
-            'observation.env_dtc_map',
-            'observation.env_normals_map',
-            'observation.EE_dtc_map',
-            'observation.EE_normals_map',
+            # 'observation.env_dtc_map',
+            # 'observation.env_normals_map',
+            # 'observation.EE_dtc_map',
+            # 'observation.EE_normals_map',
+            'observation.contact_map'
         ]
     )
 )
-list_of_arrays_to_check.append(
-    dict(
-        root_path='gt_segmentation',
-        array_names=[
-            'observation.EE_obj_mask',
-            'observation.segmentation',
-        ]
-    )
-)
+# list_of_arrays_to_check.append(
+#     dict(
+#         root_path='gt_segmentation',
+#         array_names=[
+#             'observation.EE_obj_mask',
+#             'observation.segmentation',
+#         ]
+#     )
+# )
 #%%
 episode_lengths = np.diff(np.hstack([np.array([0]), zarr_store['meta']['episode_ends'][:]]))
 # %%
@@ -119,6 +134,7 @@ if len(episode_indices_missing_data) > 0:
             'gt_contact/observation.env_normals_map',
             'gt_contact/observation.EE_dtc_map',
             'gt_contact/observation.EE_normals_map',
+            'gt_contact/observation.contact_map'
             ]
     for episode_idx, missing_arrays in episode_indices_missing_data.items():
         for missing_array in missing_arrays:
@@ -196,16 +212,16 @@ for array_info in list_of_arrays_to_check:
                 zarr_store_data[array_path].append(episode_data_array)
                 del zarr_store[episode_path][array_path]
 
-array_path = 'episode_cam_tf_world'
-for episode_idx, episode_length in tqdm(enumerate(episode_lengths), desc=f"Processing episodes for array {array_path}", position=0, leave=True):
-    episode_path = f'episode_data/episode_{episode_idx}'
-    if cam_extrinsic_rotation_angle_deg != 0:
-        episode_path += f"/rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
-    episode_data_array = zarr_store[episode_path][array_path][:]
-    print(f"adding episode {episode_path} data for array {array_path} to data group. episode data array shape: {episode_data_array.shape}")
-    if not dry_run:
-        zarr_store_meta[array_path].append(episode_data_array)
-        del zarr_store[episode_path][array_path]
+# array_path = 'episode_cam_tf_world'
+# for episode_idx, episode_length in tqdm(enumerate(episode_lengths), desc=f"Processing episodes for array {array_path}", position=0, leave=True):
+#     episode_path = f'episode_data/episode_{episode_idx}'
+#     if cam_extrinsic_rotation_angle_deg != 0:
+#         episode_path += f"/rerendered_{cam_extrinsic_rotation_angle_deg}_deg_rotation"
+#     episode_data_array = zarr_store[episode_path][array_path][:]
+#     print(f"adding episode {episode_path} data for array {array_path} to data group. episode data array shape: {episode_data_array.shape}")
+#     if not dry_run:
+#         zarr_store_meta[array_path].append(episode_data_array)
+#         del zarr_store[episode_path][array_path]
 
 # if estimated_model_group_name not in zarr_store['data']:
 #     zarr_store.create_group('data/' + estimated_model_group_name)
