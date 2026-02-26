@@ -515,27 +515,29 @@ class BookInsertionEnv(BaseEnv):
         # correct_orientation = axis_angle_to_quaternion(torch.tensor([np.pi/2, 0, 0]))
         # correct_orientation = quaternion_multiply(correct_orientation, axis_angle_to_quaternion(torch.tensor([0, 0, np.pi/2])))
         # world_tf_cam.q = quaternion_multiply(world_tf_cam.q, correct_orientation)
-
         look_at = world_tf_root.raw_pose[0,:3] + torch.tensor([0.,0,0.25])
         eye = torch.tensor([1.05775+.615, 0, 0.375615])
-        look_at_to_eye = eye - look_at
-        # traverse along look_at_to_eye vector to find a point that is  0.5489 along x axis of the world frame
-        # o + v*t = 0.5489
-        new_look_at = look_at + look_at_to_eye * ((0.5489 - look_at[0]) / look_at_to_eye[0])
-        print(f"look_at: {look_at}, eye: {eye}, new_look_at: {new_look_at}")
-        old_world_tf_cam = sapien_utils.look_at(eye, look_at)
-        new_world_tf_cam = sapien_utils.look_at(eye, new_look_at)
-        assert torch.allclose(old_world_tf_cam.get_p(), new_world_tf_cam.get_p(), atol=1e-4), f"Old world tf cam: {old_world_tf_cam}, new world tf cam: {new_world_tf_cam}"
-        assert torch.allclose(old_world_tf_cam.get_q(), new_world_tf_cam.get_q(), atol=1e-4), f"Old world tf cam: {old_world_tf_cam}, new world tf cam: {new_world_tf_cam}"
-        new_look_at_to_eye = eye - new_look_at
-        # rotate look_at_to_eye by cam_extrinsic_rotation_angle about the vertical axis
-        if self.cam_extrinsic_rotation_angle != 0.0:
+        if self.cam_extrinsic_rotation_angle is None or self.cam_extrinsic_rotation_angle == 0.0:
+            self.cam_extrinsic_rotation_angle = 0.0
+            self.world_tf_cam = sapien_utils.look_at(eye, look_at)
+        else:
+            look_at_to_eye = eye - look_at
+            # traverse along look_at_to_eye vector to find a point that is  0.5489 along x axis of the world frame
+            # o + v*t = 0.5489
+            new_look_at = look_at + look_at_to_eye * ((0.5489 - look_at[0]) / look_at_to_eye[0])
+            print(f"look_at: {look_at}, eye: {eye}, new_look_at: {new_look_at}")
+            old_world_tf_cam = sapien_utils.look_at(eye, look_at)
+            new_world_tf_cam = sapien_utils.look_at(eye, new_look_at)
+            assert torch.allclose(old_world_tf_cam.get_p(), new_world_tf_cam.get_p(), atol=1e-4), f"Old world tf cam: {old_world_tf_cam}, new world tf cam: {new_world_tf_cam}"
+            assert torch.allclose(old_world_tf_cam.get_q(), new_world_tf_cam.get_q(), atol=1e-4), f"Old world tf cam: {old_world_tf_cam}, new world tf cam: {new_world_tf_cam}"
+            new_look_at_to_eye = eye - new_look_at
+            # rotate look_at_to_eye by cam_extrinsic_rotation_angle about the vertical axis
             rot = torch.tensor(R.from_euler('z', self.cam_extrinsic_rotation_angle).as_matrix()).float()
             # print(f"dtype of rot: {rot.dtype}, dtype of look_at_to_eye: {look_at_to_eye.dtype}")
             new_look_at_to_eye = rot @ new_look_at_to_eye
             eye = new_look_at + new_look_at_to_eye
 
-        self.world_tf_cam = sapien_utils.look_at(eye, new_look_at)
+            self.world_tf_cam = sapien_utils.look_at(eye, new_look_at)
 
         return [CameraConfig("base_camera", self.world_tf_cam, width=self.camera_width, height=self.camera_height, intrinsic=self.intrinsics, near=0.01, far=5.0)]
 
